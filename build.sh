@@ -2,7 +2,7 @@
 SCRIPTNAME=$(basename "$0")
 
 function show_help() {
-    echo "Usage: ./$SCRIPTNAME [--lint | --clean]"
+    echo "Usage: ./$SCRIPTNAME [--test | --clean]"
 }
 
 function check_params() {
@@ -15,9 +15,9 @@ function check_params() {
     if [ "$1" == "-h" -o "$1" == "--help" ]
     then
         SHOW_HELP=1
-    elif [ "$1" == "--lint" ]
+    elif [ "$1" == "--test" ]
     then
-        LINT=1
+        TEST=1
     elif [ "$1" == "--clean" ]
     then
         CLEAN=1
@@ -41,13 +41,6 @@ function run_build_cmds() {
     elm_make Log
     elm_make EditTags
 
-    if [[ $LINT == 1 ]]
-    then
-        TO=TO
-        DO=DO
-        grep $TO$DO *.sh
-        elm analyse || true
-    fi
 }
 
 function launch_elm_docker() {
@@ -59,6 +52,21 @@ function launch_elm_docker() {
                -p 8000:8000 \
                tagtime-elm "./$SCRIPTNAME" --in-docker "$@" || exit 1
 }
+
+function lint() {
+    TO=TO
+    DO=DO
+    grep $TO$DO *.sh
+    elm analyse || true
+}
+
+#       understand/
+# We can both static and dynamic tests to give us confidence in our
+# code. 'lint' is a static test system.
+function runtests() {
+    lint "$@"
+}
+
 
 
 #       situation/
@@ -72,6 +80,10 @@ function launch_elm_docker() {
 if [[ $IN_DOCKER == 1 ]]
 then
     run_build_cmds "$@"
+    if [[ $TEST == 1 ]]
+    then
+        runtests "$@"
+    fi
 elif [[ $SHOW_HELP == 1 ]]
 then
     show_help
