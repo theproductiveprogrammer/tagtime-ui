@@ -2,7 +2,7 @@
 SCRIPTNAME=$(basename "$0")
 
 function show_help() {
-    echo "Usage: ./$SCRIPTNAME [--test | --clean]"
+    echo "Usage: ./$SCRIPTNAME [--in | --test | --clean]"
 }
 
 function check_params() {
@@ -21,6 +21,9 @@ function check_params() {
     elif [ "$1" == "--clean" ]
     then
         CLEAN=1
+    elif [ "$1" == "--in" ]
+    then
+        DROPIN=1
     elif [ ! -z "$1" ]
     then
         echo "Did not understand $@"
@@ -38,8 +41,7 @@ function elm_make() {
 function run_build_cmds() {
     echo "Building elm code..."
 
-    elm_make Log
-    elm_make EditTags
+    elm_make Ping
 
 }
 
@@ -51,6 +53,16 @@ function launch_elm_docker() {
                -u $UID:$GID \
                -p 8000:8000 \
                tagtime-elm "./$SCRIPTNAME" --in-docker "$@" || exit 1
+}
+
+function in_docker_elm() {
+    docker run -it --rm \
+               -v "$(pwd):/code" \
+               -w "/code" \
+               -e "HOME=/tmp" \
+               -u $UID:$GID \
+               -p 8000:8000 \
+               tagtime-elm bash
 }
 
 function lint() {
@@ -84,6 +96,9 @@ then
     then
         runtests "$@"
     fi
+elif [[ $DROPIN == 1 ]]
+then
+    in_docker_elm
 elif [[ $SHOW_HELP == 1 ]]
 then
     show_help
