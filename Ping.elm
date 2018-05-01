@@ -509,6 +509,27 @@ subscriptions model =
 
 {--
         understand/
+In Elm any communication with JavaScript goes through a port. This is
+like a hole in the side of the Elm program where values go in and out.
+These work exactly like the commands and subscriptions
+    - Sending values out to JS is a command
+    - Listening for values coming in from JS is a subscription
+-}
+
+
+{-|
+        understand/
+In order to show/hide our window we need to inform the electron main
+process to do it (elm can only mange a 'div-window' that we have created
+ourselves). Therefore we create a port through which we send a message
+asking the main process to show/hide our browser window.
+-}
+port show : String -> Cmd msg
+
+
+
+{--
+        understand/
 Messages are how the model gets updated. They are clean and structured
 way to centralize all changes. This gives us the following benefits:
 1. No changes happen somewhere deep inside a code flow
@@ -536,6 +557,7 @@ type Msg
     | EditCatCancel
     | ServerGotCat String (Result Http.Error ())
     | ServerGotPing Int (Result Http.Error ())
+    | HideWindow
     | ShowTODO
     | HideTODO
 
@@ -596,6 +618,9 @@ update msg model =
 
         ServerGotPing u r ->
             serverGotPing u r model
+
+        HideWindow ->
+            ( model, show "off" )
 
         ShowTODO ->
             ( { model | dialog = Just NotDone }, Cmd.none )
@@ -988,16 +1013,24 @@ afterLogin r model =
 {-|
         outcome/
 We update our current time and perform time-based events:
-    1. Get the latest data from the server
-    2. Update the ping list with the latest scheduled pings
+    1. Update the ping list with the latest scheduled pings
+    2. Request the latest data from the server
+    3. If any new pings have been added, ensure that the window is shown
 -}
 onTick : Time -> Model -> ( Model, Cmd Msg )
 onTick time model =
     let
-        m =
-            addLatestPings { model | last_tick = time }
+        ( m, cmds ) =
+            syncWithServer <|
+                addLatestPings { model | last_tick = time }
+
+        show_ping_window =
+            if List.length m.pings == List.length model.pings then
+                Cmd.none
+            else
+                show "on"
     in
-        syncWithServer m
+        ( m, Cmd.batch (show_ping_window :: cmds) )
 
 
 {-|
@@ -1082,7 +1115,7 @@ merge_1 unx pings =
 Send any updates we have and after that, get the latest updates from the
 server.
 -}
-syncWithServer : Model -> ( Model, Cmd Msg )
+syncWithServer : Model -> ( Model, List (Cmd Msg) )
 syncWithServer model =
     let
         no_updates =
@@ -1139,23 +1172,22 @@ as user sync data)
 TODO: We should retry error fetches at increasing intervals (1sec, 5sec,
 30sec, 2mins,...)
 -}
-refreshServerData : Model -> ( Model, Cmd Msg )
+refreshServerData : Model -> ( Model, List (Cmd Msg) )
 refreshServerData model =
     let
         consts =
             model.consts
 
         get_data =
-            Cmd.batch [ getSch consts, getCats consts, getPings consts ]
+            [ getSch consts, getCats consts, getPings consts ]
 
         get_on_failure =
-            Cmd.batch <|
-                List.map (\( _, cmd ) -> cmd) <|
-                    List.filter (\( failed, _ ) -> failed)
-                        [ ( model.get_sch_failed, getSch consts )
-                        , ( model.get_cats_failed, getCats consts )
-                        , ( model.get_pings_failed, getPings consts )
-                        ]
+            List.map (\( _, cmd ) -> cmd) <|
+                List.filter (\( failed, _ ) -> failed)
+                    [ ( model.get_sch_failed, getSch consts )
+                    , ( model.get_cats_failed, getCats consts )
+                    , ( model.get_pings_failed, getPings consts )
+                    ]
 
         m =
             { model
@@ -1198,7 +1230,7 @@ refreshServerData model =
 Send category updates and ping updates
 TODO: Batch updates?
 -}
-sendUpdates : Model -> ( Model, Cmd Msg )
+sendUpdates : Model -> ( Model, List (Cmd Msg) )
 sendUpdates model =
     let
         updated a =
@@ -1238,7 +1270,7 @@ sendUpdates model =
         pings_in_flight =
             List.map in_flight model.pings
     in
-        ( { model | cats = cats_in_flight, pings = pings_in_flight }, Cmd.batch updates )
+        ( { model | cats = cats_in_flight, pings = pings_in_flight }, updates )
 
 
 
@@ -1736,7 +1768,7 @@ close_btn =
                 , ( "cursor", "pointer" )
                 ]
     in
-        Html.div [ style, HE.onClick ShowTODO ] []
+        Html.div [ style, HE.onClick HideWindow ] []
 
 
 top_bar : Html.Html Msg
