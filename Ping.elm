@@ -2132,16 +2132,16 @@ category_head_1 model width color cat =
                 [ ( "width", px width )
                 , ( "background", color )
                 , ( "padding", "12px 0" )
+                , ( "cursor", "pointer" )
                 ]
     in
-        Html.div [ style ]
+        Html.div [ style, HE.onClick (EditCat cat.name) ]
             [ Html.img [ iconstyle, HA.src icon ] []
             , Html.div [ titlestyle ] [ Html.text (currName cat) ]
             , Html.img
                 [ class "cat-settings"
                 , settings_style
                 , HA.src cat_settings_icon
-                , HE.onClick (EditCat cat.name)
                 ]
                 []
             ]
