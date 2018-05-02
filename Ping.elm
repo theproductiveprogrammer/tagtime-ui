@@ -141,6 +141,23 @@ type alias CatTag =
 
 
 {-|
+        situation/
+The user has selected multiple items (pings) and we need to know if a
+given element (tag) is present in them.
+
+        understand/
+It could be present in all of the items, in some of them, or in none. If
+there is no selection at all we cannot reasonably say anything so we say
+that there is no selection.
+-}
+type SelStatus
+    = InAll
+    | InSome
+    | InNone
+    | NoSelection
+
+
+{-|
         understand/
 A 'Ping' represents a sampling of what the user was doing at a given
 unix time.
@@ -223,6 +240,39 @@ getCatForTag model tag =
         )
         Nothing
         model.cats
+
+
+{-|
+        outcome/
+Check if the given tag is in the current selection and return the status
+-}
+tagInSelection : Model -> String -> SelStatus
+tagInSelection model tag =
+    let
+        sel_pings =
+            Set.toList model.current
+                |> List.map (getPing model)
+
+        in_ping p =
+            List.foldr
+                (\t acc -> acc || strEq t tag)
+                False
+                p.tags
+
+        in_all_sels =
+            List.foldr (\p acc -> acc && in_ping p) True sel_pings
+
+        in_any_sel =
+            List.foldr (\p acc -> acc || in_ping p) False sel_pings
+    in
+        if List.length sel_pings == 0 then
+            NoSelection
+        else if in_all_sels then
+            InAll
+        else if in_any_sel then
+            InSome
+        else
+            InNone
 
 
 {-|
@@ -2133,31 +2183,24 @@ show_category_tag_1 model color inset_color tag =
             , ( "box-shadow", "inset 1px 1px " ++ inset_color )
             ]
 
-        sel_pings =
-            Set.toList model.current
-                |> List.map (getPing model)
-
-        in_ping p =
-            List.foldr
-                (\t acc -> acc || strEq t tag)
-                False
-                p.tags
-
-        in_all_sels =
-            List.foldr (\p acc -> acc && in_ping p) True sel_pings
-
-        in_any_sel =
-            List.foldr (\p acc -> acc || in_ping p) False sel_pings
+        selstatus =
+            tagInSelection model tag
 
         ( btn_style, msg ) =
-            if List.length sel_pings == 0 then
-                ( HA.style [], SelectFirstPing )
-            else if in_all_sels then
-                ( HA.style sel_style, RemoveCurrentTag tag )
-            else if in_any_sel then
-                ( HA.style <| ( "opacity", "0.6" ) :: sel_style, AddCurrentTag tag )
-            else
-                ( HA.style [], AddCurrentTag tag )
+            case selstatus of
+                InAll ->
+                    ( HA.style sel_style, RemoveCurrentTag tag )
+
+                InSome ->
+                    ( HA.style <| ( "opacity", "0.6" ) :: sel_style
+                    , AddCurrentTag tag
+                    )
+
+                InNone ->
+                    ( HA.style [], AddCurrentTag tag )
+
+                NoSelection ->
+                    ( HA.style [], SelectFirstPing )
     in
         Html.div [ style, HE.onClick msg ]
             [ Html.div [ btn_style ] [ Html.text tag ] ]
@@ -2169,36 +2212,106 @@ uncategorized_tags_1 model =
         style =
             HA.style
                 [ ( "position", "absolute" )
-                , ( "bottom", px uncategorized_card_bottom )
-                , ( "right", px uncategorized_card_right )
-                , ( "width", px uncategorized_card_width )
-                , ( "height", px uncategorized_card_height )
-                , ( "line-height", px uncategorized_card_height )
-                , ( "border-radius", px uncategorized_card_border_radius )
-                , ( "background-color", uncategorized_card_color )
+                , ( "bottom", px uncategorized_strip_bottom )
+                , ( "left", px uncategorized_strip_left )
+                , ( "width", px uncategorized_strip_width )
+                , ( "height", px uncategorized_strip_height )
+                , ( "background", uncategorized_strip_color )
+                , ( "box-shadow", "inset 0px 1px 1px #9a9a9a" )
+                , ( "font-size", "12px" )
                 , ( "cursor", "pointer" )
+                ]
+    in
+        Html.div [ style ]
+            [ uncat_tags_1 model
+            , uncat_title_1
+            ]
+
+
+uncat_title_1 : Html.Html Msg
+uncat_title_1 =
+    let
+        style =
+            HA.style
+                [ ( "width", px uncategorized_strip_title_width )
+                , ( "height", px uncategorized_strip_height )
+                , ( "line-height", px uncategorized_strip_height )
+                , ( "box-shadow", "1px 1px 0.5px #525252" )
+                , ( "text-align", "center" )
+                , ( "background", uncategorized_card_color )
                 ]
 
         icon_style =
             HA.style
                 [ ( "opacity", "0.75" )
-                , ( "display", "inline-block" )
-                , ( "margin", "-4px" )
+                , ( "margin-bottom", "-4px" )
                 ]
 
         txt_style =
             HA.style [ ( "padding-left", "0.5em" ) ]
-
-        num =
-            toString (List.length model.uncategorized)
-
-        txt =
-            "Click to fix " ++ num ++ " uncategorized tags"
     in
-        Html.div [ class "uncategorized", style, HE.onClick EditUnCat ]
+        Html.div [ style, HE.onClick EditUnCat ]
             [ Html.img [ icon_style, HA.src cat_settings_icon ] []
-            , Html.span [ txt_style ] [ Html.text txt ]
+            , Html.span [ txt_style ] [ Html.text "Uncategorized:" ]
             ]
+
+
+uncat_tags_1 : Model -> Html.Html Msg
+uncat_tags_1 model =
+    let
+        width =
+            uncategorized_strip_width - uncategorized_strip_title_width
+
+        style =
+            HA.style
+                [ ( "width", px width )
+                , ( "overflow", "scroll" )
+                , ( "float", "right" )
+                , ( "line-height", px uncategorized_strip_height )
+                ]
+    in
+        Html.div [ style ]
+            (List.map (uncat_tag_1 model) model.uncategorized)
+
+
+uncat_tag_1 : Model -> String -> Html.Html Msg
+uncat_tag_1 model tag =
+    let
+        style =
+            [ ( "font-style", "italic" )
+            , ( "padding", "2px 4px" )
+            , ( "margin", "0 2px" )
+            , ( "cursor", "pointer" )
+            ]
+
+        all_sel_style =
+            List.append style
+                [ ( "background", "#d0d0d0" )
+                , ( "border", "1px ridge #929292" )
+                , ( "border-radius", "4px" )
+                ]
+
+        some_sel_style =
+            ( "opacity", "0.6" ) :: all_sel_style
+
+        selstatus =
+            tagInSelection model tag
+
+        ( btn_style, msg ) =
+            case selstatus of
+                InAll ->
+                    ( HA.style all_sel_style, RemoveCurrentTag tag )
+
+                InSome ->
+                    ( HA.style some_sel_style, AddCurrentTag tag )
+
+                InNone ->
+                    ( HA.style style, AddCurrentTag tag )
+
+                NoSelection ->
+                    ( HA.style style, SelectFirstPing )
+    in
+        Html.span [ btn_style, HE.onClick msg ] [ Html.text tag ]
 
 
 bottom_bar : Html.Html Msg
@@ -2701,29 +2814,34 @@ uncategorized_card_color =
     "linear-gradient(170deg, #606060, #808080, #404040)"
 
 
-uncategorized_card_bottom : Int
-uncategorized_card_bottom =
-    8
+uncategorized_strip_color : String
+uncategorized_strip_color =
+    "linear-gradient(#6f6f6f, #949393)"
 
 
-uncategorized_card_right : Int
-uncategorized_card_right =
-    8
+uncategorized_strip_bottom : Int
+uncategorized_strip_bottom =
+    0
 
 
-uncategorized_card_width : Int
-uncategorized_card_width =
-    200
+uncategorized_strip_left : Int
+uncategorized_strip_left =
+    1
 
 
-uncategorized_card_height : Int
-uncategorized_card_height =
-    48
+uncategorized_strip_title_width : Int
+uncategorized_strip_title_width =
+    128
 
 
-uncategorized_card_border_radius : Int
-uncategorized_card_border_radius =
-    10
+uncategorized_strip_width : Int
+uncategorized_strip_width =
+    category_pane_width - 2
+
+
+uncategorized_strip_height : Int
+uncategorized_strip_height =
+    32
 
 
 category_tag_height : Int
