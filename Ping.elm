@@ -464,6 +464,15 @@ addNew s l =
 
 
 {-|
+        understand/
+Because we are looking at merging potentially huge lists a naive
+implementation runs into the problem of "stack overflow". To help this
+out we create a helper function that takes an accumulator which helps
+the elm compiler to implement "tail-call optimization" and just drop the
+stack frames. This added complexity is where an iterative solution
+clearly wins over a functional one but - as we only use it when
+optimization is needed - we can learn to live with the added complexity.
+
         problem/
 As we refresh data from the server we run into all the usual glorious
 issues with keeping things in sync.
@@ -483,34 +492,39 @@ some simplifying examples and that should get us a reasonable outcome.
 -}
 sync_merge : (SyncAble a -> SyncAble a -> Order) -> List (SyncAble a) -> List (SyncAble a) -> List (SyncAble a)
 sync_merge cmp my svr =
+    sync_merge_1 cmp my svr []
+
+
+sync_merge_1 : (SyncAble a -> SyncAble a -> Order) -> List (SyncAble a) -> List (SyncAble a) -> List (SyncAble a) -> List (SyncAble a)
+sync_merge_1 cmp my svr res =
     case ( my, svr ) of
         ( _, [] ) ->
-            my
+            List.append res my
 
         ( [], _ ) ->
-            svr
+            List.append res svr
 
         ( h_my :: t_my, h_svr :: t_svr ) ->
             case cmp h_my h_svr of
                 LT ->
-                    h_my :: sync_merge cmp t_my svr
+                    sync_merge_1 cmp t_my svr (h_my :: res)
 
                 GT ->
-                    h_svr :: sync_merge cmp my t_svr
+                    sync_merge_1 cmp my t_svr (h_svr :: res)
 
                 EQ ->
                     case h_my.saved of
                         OnServer ->
-                            h_svr :: sync_merge cmp t_my t_svr
+                            sync_merge_1 cmp t_my t_svr (h_svr :: res)
 
                         InMemory ->
-                            h_my :: sync_merge cmp t_my t_svr
+                            sync_merge_1 cmp t_my t_svr (h_my :: res)
 
                         InFlight ->
-                            h_my :: sync_merge cmp t_my t_svr
+                            sync_merge_1 cmp t_my t_svr (h_my :: res)
 
                         ServerSaysNo ->
-                            h_svr :: sync_merge cmp t_my t_svr
+                            sync_merge_1 cmp t_my t_svr (h_svr :: res)
 
 
 {-|
