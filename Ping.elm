@@ -2046,12 +2046,9 @@ category_pane model =
                 ]
 
         blocks =
-            if List.length model.uncategorized == 0 then
-                categorized_tags_1 model
-            else
-                List.reverse <|
-                    uncategorized_tags_1 model
-                        :: List.reverse (categorized_tags_1 model)
+            List.reverse <|
+                uncategorized_tags_1 model
+                    :: List.reverse (categorized_tags_1 model)
     in
         Html.div [ style ] blocks
 
