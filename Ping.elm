@@ -2400,7 +2400,8 @@ model.
 
 
 type alias ViewParams =
-    { window :
+    { scrollbar_offset : Int
+    , window :
         { width : Int
         , height : Int
         }
@@ -2628,6 +2629,9 @@ p =
 
         top_bar_icon_sz =
             21
+
+        scrollbar_offset =
+            16
 
         window =
             { width = 800
@@ -2893,7 +2897,8 @@ p =
                 }
             }
     in
-        { window = window
+        { scrollbar_offset = scrollbar_offset
+        , window = window
         , friction_bar = friction_bar
         , top_bar = top_bar
         , settings_btn = settings_btn
@@ -3508,6 +3513,7 @@ tag_selection_bar_1 model =
                 , ( "width", px p.tag_selection.width )
                 , ( "height", px p.tag_selection.height )
                 , ( "background", p.tag_selection.color )
+                , ( "overflow", "hidden" )
                 ]
     in
         Html.div [ style ]
@@ -3568,7 +3574,8 @@ table display to achieve the effect.
 
         outcome/
 We filter the user search against all tags and show it in a nice
-scrollable list.
+scrollable list. We make the height slightly bigger to hide the
+scrollbar.
 -}
 tags_1 : Model -> Html.Html Msg
 tags_1 model =
@@ -3579,10 +3586,11 @@ tags_1 model =
                 , ( "top", px p.tag_selection.tags.top )
                 , ( "left", px p.tag_selection.tags.left )
                 , ( "width", px p.tag_selection.tags.width )
-                , ( "height", px p.tag_selection.tags.height )
+                , ( "height", px (p.tag_selection.tags.height + p.scrollbar_offset) )
                 , ( "display", "flex" )
                 , ( "flex-wrap", "nowrap" )
-                , ( "overflow", "scroll" )
+                , ( "overflow-x", "scroll" )
+                , ( "overflow-y", "hidden" )
                 , ( "font-size", px p.tag_selection.tags.font_size )
                 ]
 
