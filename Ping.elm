@@ -14,6 +14,7 @@ import Dom
 import Regex
 import Dict
 import Chart
+import Dom.Scroll as Scroll
 
 
 {--
@@ -904,6 +905,7 @@ type Msg
     | ServerGotCat String (Result Http.Error ())
     | ServerGotPing Int (Result Http.Error ())
     | HideWindow
+    | OnScrollTagsUp (Result Dom.Error (List ()))
     | OnElementFocused (Result Dom.Error ())
     | ShowEditTags
     | EditTagVals EditingTag
@@ -957,7 +959,10 @@ update msg model =
             serverGotPing u r model
 
         HideWindow ->
-            ( model, show "off" )
+            hideWindow model
+
+        OnScrollTagsUp r ->
+            onScrollTagsUp r model
 
         OnElementFocused r ->
             onElementFocused r model
@@ -1083,6 +1088,71 @@ uncategorizedTags model =
         )
         []
         model.pings
+
+
+{-|
+        outcome/
+We hide the window, clear any selections and reset any scrolls (category
+and ping list) to the top so the user can start fresh when a new ping
+window pops up.
+-}
+hideWindow : Model -> ( Model, Cmd Msg )
+hideWindow model =
+    let
+        m =
+            { model | current = Set.empty }
+
+        cmds =
+            Cmd.batch
+                [ show "off"
+                , scrollTagListsToTop_1
+                ]
+    in
+        ( m, cmds )
+
+
+{-|
+        outcome/
+Scroll the ping list and all the category tags to the top so the user
+can see the most appropriate ones first.
+
+NB: The ping list and category tags must each be given a unique id
+(categories from 0 to 3) which are then used here.
+-}
+scrollTagListsToTop_1 : Cmd Msg
+scrollTagListsToTop_1 =
+    let
+        cat_ids =
+            List.map catTagsId [ 0, 1, 2, 3 ]
+
+        scroll_cmds =
+            List.map Scroll.toTop (pingListID :: cat_ids)
+    in
+        Task.sequence scroll_cmds |> Task.attempt OnScrollTagsUp
+
+
+catTagsId : Int -> String
+catTagsId num =
+    "cat-tags-" ++ (toString num)
+
+
+pingListID : String
+pingListID =
+    "ping-list"
+
+
+onScrollTagsUp : Result Dom.Error (List ()) -> Model -> ( Model, Cmd Msg )
+onScrollTagsUp r model =
+    case r of
+        Err (Dom.NotFound id) ->
+            let
+                _ =
+                    Debug.log "Unexpected error 478: Unable to scroll" id
+            in
+                ( model, Cmd.none )
+
+        Ok _ ->
+            ( model, Cmd.none )
 
 
 {-|
@@ -3093,7 +3163,7 @@ ping_list_1 model =
         pings =
             List.take 50 model.pings
     in
-        Html.div [ style ]
+        Html.div [ style, HA.id pingListID ]
             [ Html.table
                 [ HA.attribute "cellspacing" "0"
                 , HA.attribute "cellpadding" "0"
@@ -3420,12 +3490,12 @@ category_panel_1 model cat ndx =
     in
         Html.div [ style ]
             [ category_head_1 model head_color icon cat.name
-            , category_tags_1 model body_color sel_color cat.tags
+            , category_tags_1 model body_color sel_color cat.tags ndx
             ]
 
 
-category_tags_1 : Model -> String -> String -> List Tag -> Html.Html Msg
-category_tags_1 model bg_color sel_tag_color tags =
+category_tags_1 : Model -> String -> String -> List Tag -> Int -> Html.Html Msg
+category_tags_1 model bg_color sel_tag_color tags ndx =
     let
         height =
             p.category_panel.height - p.category_panel.head_height
@@ -3444,7 +3514,7 @@ category_tags_1 model bg_color sel_tag_color tags =
         sel_tags =
             make_selectable_list model tags
     in
-        Html.div [ style ]
+        Html.div [ style, HA.id (catTagsId ndx) ]
             (List.map (category_tag_1 model sel_tag_color) sel_tags)
 
 
