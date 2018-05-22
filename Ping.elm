@@ -2635,6 +2635,7 @@ type alias ViewParams =
         { selected_background : String
         , selected_shadow : String
         , background : String
+        , sleepy_background : String
         , height : Int
         , when :
             { width : Int
@@ -2874,6 +2875,7 @@ p =
             { selected_background = "#277ec1"
             , selected_shadow = "inset 0px -1px 1px #fffdfd"
             , background = "linear-gradient(#d0d0d0, #d9d9d9, #e9e9e9)"
+            , sleepy_background = "linear-gradient(#7b7c9d, #8a8aa8, #9899b3)"
             , height = 48
             , when =
                 { width = 64
@@ -3299,6 +3301,11 @@ show_ping_1 model ping =
                 [ ( "background", p.ping_entry.selected_background )
                 , ( "box-shadow", p.ping_entry.selected_shadow )
                 ]
+            else if List.member eSleep ping.tags then
+                [ ( "background", p.ping_entry.sleepy_background )
+                , ( "font-style", "italic" )
+                , ( "box-shadow", p.ping_entry.selected_shadow )
+                ]
             else
                 [ ( "background", p.ping_entry.background ) ]
 
@@ -3329,13 +3336,35 @@ ping_when_1 ping =
 ping_tags_1 : Ping -> Html.Html Msg
 ping_tags_1 ping =
     let
+        e_color_map =
+            [ ( eSleep, "rgba(85, 86, 143, 0.75)" )
+            , ( eHigh, "rgba(0, 191, 118, 0.75)" )
+            , ( eMed, "rgba(128, 128, 128, 0.75)" )
+            , ( eLow, "rgba(235, 17, 36, 0.52)" )
+            ]
+
+        energy_border =
+            List.foldr
+                (\( e, clr ) acc ->
+                    if List.member e ping.tags then
+                        "3px solid " ++ clr
+                    else
+                        acc
+                )
+                "none"
+                e_color_map
+
+        included t =
+            not <| specialTag t
+
         tags =
-            String.join ", " ping.tags
+            String.join ", " (List.filter included ping.tags)
 
         style =
             HA.style
                 [ ( "width", p.ping_entry.tags.width )
                 , ( "padding", px p.ping_entry.tags.padding )
+                , ( "border-right", energy_border )
                 ]
     in
         Html.td [ style ] [ Html.text tags ]
