@@ -7,7 +7,6 @@ import Http
 import Date
 import Json.Decode as Decode
 import Json.Encode as Encode
-import Set exposing (Set)
 import Time exposing (Time)
 import Task
 import Dom
@@ -237,7 +236,11 @@ type alias Model =
         Time
         -- user action data --
     , current :
-        Set Unix
+        List Unix
+    , shift_on :
+        Bool
+    , ctrl_on :
+        Bool
         -- view helper data --
     , recent_tags :
         List Tag
@@ -356,7 +359,7 @@ tagInSelection : Model -> String -> SelStatus
 tagInSelection model tag =
     let
         sel_pings =
-            Set.toList model.current |> List.map (alwaysGetPing model)
+            List.map (alwaysGetPing model) model.current
 
         in_ping p =
             List.foldr
@@ -561,7 +564,7 @@ get_recent_tags_1 model =
             List.append selected_pings handful_of_latest
 
         selected_pings =
-            List.reverse (Set.toList model.current)
+            List.reverse model.current
                 |> List.map (alwaysGetPing model)
 
         handful_of_latest =
@@ -836,7 +839,9 @@ init consts =
       , after_login = []
       , login_req_in_flight = False
       , last_tick = 0
-      , current = Set.empty
+      , current = []
+      , shift_on = False
+      , ctrl_on = False
       , recent_tags = []
       , all_tags_filter = ""
       , all_tags = []
@@ -857,7 +862,12 @@ second.
 -}
 subscriptions : Model -> Sub Msg
 subscriptions model =
-    Time.every Time.second OnTick
+    -- TODO: once a second
+    Sub.batch
+        [ Time.every (Time.second * 30) OnTick
+        , splKeyActive OnSplKeyActivated
+        , splKeysReleased OnSplKeysReleased
+        ]
 
 
 
@@ -881,6 +891,17 @@ asking the main process to show/hide our browser window.
 port show : String -> Cmd msg
 
 
+{-|
+        understand/
+In order to get the status of special keys - shift and control - we use
+javascript as it has much better support than elm.
+-}
+port splKeyActive : (String -> msg) -> Sub msg
+
+
+port splKeysReleased : (Bool -> msg) -> Sub msg
+
+
 
 {--
         understand/
@@ -898,7 +919,9 @@ type Msg
     | SaveNewPings (Result Http.Error (List Ping))
     | AfterLogin (Result Http.Error ())
     | OnTick Time
-    | ToggleSelect Int
+    | OnSplKeyActivated String
+    | OnSplKeysReleased Bool
+    | ClickSelect Unix
     | SelectFirstPing
     | AddCurrentTag String
     | RemoveCurrentTag String
@@ -940,8 +963,14 @@ update msg model =
         OnTick t ->
             onTick t model
 
-        ToggleSelect unx ->
-            toggleSelect unx model
+        OnSplKeyActivated key ->
+            onSplKeyActivated key model
+
+        OnSplKeysReleased _ ->
+            onSplKeysReleased model
+
+        ClickSelect unx ->
+            clickSelect unx model
 
         SelectFirstPing ->
             selectFirstPing model
@@ -1100,7 +1129,7 @@ hideWindow : Model -> ( Model, Cmd Msg )
 hideWindow model =
     let
         m =
-            { model | current = Set.empty }
+            { model | current = [] }
 
         cmds =
             Cmd.batch
@@ -1956,24 +1985,95 @@ updSavedStatus obj result =
 
 {-|
         outcome/
-Toggle ping in/out current selection
+Keep track of the user pressing and releasing special keys - shift and
+control
 -}
-toggleSelect : Int -> Model -> ( Model, Cmd Msg )
-toggleSelect unx model =
-    let
-        _ =
-            if gDumpUnix then
-                Debug.log "Toggling" (cal unx ++ " " ++ hhmm unx)
-            else
-                ""
+onSplKeyActivated : String -> Model -> ( Model, Cmd Msg )
+onSplKeyActivated key model =
+    if key == "shift" then
+        ( { model | shift_on = True }, Cmd.none )
+    else if key == "control" then
+        ( { model | ctrl_on = True }, Cmd.none )
+    else
+        ( model, Cmd.none )
 
+
+onSplKeysReleased : Model -> ( Model, Cmd Msg )
+onSplKeysReleased model =
+    ( { model | shift_on = False, ctrl_on = False }, Cmd.none )
+
+
+{-|
+        outcome/
+Handle ping selection nicely using the standard paradigm - click picks a
+new item, shift-click picks a range, and control-click adds an item.
+Because the user has changed the current selection, also update the
+recent tags list.
+
+        steps/
+If ctrl is pressed add this selection.
+If shift is pressed create a new set of selections from the first
+selection to this one. If there is no first selection, make this one the
+first selection.
+Otherwise make this the selection.
+-}
+clickSelect : Unix -> Model -> ( Model, Cmd Msg )
+clickSelect unx model =
+    let
         current =
-            if Set.member unx model.current then
-                Set.remove unx model.current
+            if model.shift_on then
+                shift_select_1 model unx
+            else if model.ctrl_on then
+                ctrl_select_1 model unx
             else
-                Set.insert unx model.current
+                [ unx ]
     in
         ( loadRecentTags { model | current = current }, Cmd.none )
+
+
+shift_select_1 : Model -> Unix -> List Int
+shift_select_1 model unx =
+    let
+        first_selection =
+            case List.head model.current of
+                Nothing ->
+                    unx
+
+                Just h ->
+                    h
+
+        dir_to_walk =
+            if first_selection < unx then
+                List.foldl
+            else
+                List.foldr
+    in
+        dir_to_walk
+            (\p acc ->
+                if first_selection < unx then
+                    if p.unix <= unx && p.unix >= first_selection then
+                        p.unix :: acc
+                    else
+                        acc
+                else if p.unix <= first_selection && p.unix >= unx then
+                    p.unix :: acc
+                else
+                    acc
+            )
+            []
+            model.pings
+
+
+ctrl_select_1 : Model -> Unix -> List Int
+ctrl_select_1 model unx =
+    let
+        in_sel =
+            List.member unx model.current
+    in
+        if in_sel then
+            List.filter (\u -> u /= unx) model.current
+        else
+            unx :: model.current
 
 
 {-|
@@ -1994,7 +2094,7 @@ selectFirstPing model =
                 ( model, Cmd.none )
 
             Just p ->
-                ( { model | current = Set.singleton p.unix }, Cmd.none )
+                ( { model | current = [ p.unix ] }, Cmd.none )
 
 
 addCurrentTag : String -> Model -> ( Model, Cmd Msg )
@@ -2010,7 +2110,7 @@ addTagToCurrent : String -> Model -> Model
 addTagToCurrent tag model =
     let
         add_tag_to_curr p =
-            if Set.member p.unix model.current then
+            if List.member p.unix model.current then
                 add_tag_1 model tag p
             else
                 p
@@ -2061,7 +2161,7 @@ removeCurrentTag : String -> Model -> ( Model, Cmd Msg )
 removeCurrentTag tag model =
     let
         rm_tag_from_curr p =
-            if Set.member p.unix model.current then
+            if List.member p.unix model.current then
                 let
                     u =
                         List.filter (\t -> not <| strEq t tag) p.tags
@@ -2296,7 +2396,7 @@ Update the "all tags" list to match the new filter
 -}
 tagInputUpdated : String -> Model -> ( Model, Cmd Msg )
 tagInputUpdated f model =
-    if Set.size model.current == 0 then
+    if List.isEmpty model.current then
         selectFirstPing model
     else
         ( { model | all_tags_filter = f }, Cmd.none )
@@ -2363,7 +2463,7 @@ addBrick brick model =
         m =
             List.foldr (\t accum -> addTagToCurrent t accum) model brick.tags
     in
-        if Set.size model.current == 0 then
+        if List.isEmpty model.current then
             selectFirstPing model
         else
             ( loadRecentTags m, Cmd.none )
@@ -3180,7 +3280,7 @@ show_ping_1 : Model -> Ping -> Html.Html Msg
 show_ping_1 model ping =
     let
         style_v =
-            if Set.member ping.unix model.current then
+            if List.member ping.unix model.current then
                 [ ( "background", p.ping_entry.selected_background )
                 , ( "box-shadow", p.ping_entry.selected_shadow )
                 ]
@@ -3194,7 +3294,7 @@ show_ping_1 model ping =
     in
         Html.tr
             [ style
-            , HE.onClick (ToggleSelect ping.unix)
+            , HE.onClick (ClickSelect ping.unix)
             ]
             [ ping_when_1 ping, ping_tags_1 ping ]
 
@@ -4460,3 +4560,8 @@ cal unix =
             day unix
     in
         wd ++ ", " ++ dy ++ "/" ++ mn
+
+
+dumpUnx : Int -> String
+dumpUnx unix =
+    cal unix ++ " " ++ hhmm unix
