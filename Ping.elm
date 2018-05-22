@@ -1291,23 +1291,11 @@ saveNewSch r model =
             let
                 m =
                     { model | sch = sch }
-
-                _ =
-                    if gDumpUnix then
-                        Debug.log "Schedule"
-                            (List.map (\unx -> cal unx ++ " " ++ hhmm unx) sch)
-                    else
-                        []
             in
                 ( addLatestPings m, Cmd.none )
 
         Err err ->
             onHttpError err { model | get_sch_failed = True } (getSch model)
-
-
-gDumpUnix : Bool
-gDumpUnix =
-    False
 
 
 {-|
@@ -1614,6 +1602,33 @@ add_one_ping_1 model =
 merge_sch_and_pings_1 : Model -> Model
 merge_sch_and_pings_1 model =
     let
+        filt_for_show x =
+            let
+                h =
+                    Maybe.withDefault 0 <| List.head model.sch
+
+                t =
+                    Maybe.withDefault 0 <| List.head (List.reverse model.sch)
+            in
+                List.filter
+                    (\u ->
+                        abs (u - h) < 60 * 60 * 5 || abs (u - t) < 60 * 60 * 5
+                    )
+                    x
+
+        _ =
+            Debug.log "sch" (List.map dumpUnx <| filt_for_show model.sch)
+
+        _ =
+            Debug.log "now" (dumpUnx <| tick_to_unix model.last_tick)
+
+        _ =
+            Debug.log "oldest" (dumpUnx oldest_ping_time)
+
+        _ =
+            Debug.log "past_ping_times"
+                (List.map dumpUnx <| filt_for_show past_ping_times)
+
         oldest_ping_time =
             case List.head (List.reverse model.pings) of
                 Nothing ->
