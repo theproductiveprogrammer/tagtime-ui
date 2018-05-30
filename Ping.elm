@@ -276,23 +276,6 @@ tick_to_unix t =
     round <| t / 1000
 
 
-is_same_day : Unix -> Unix -> Bool
-is_same_day unix1 unix2 =
-    let
-        date1 =
-            unix_to_local unix1
-
-        date2 =
-            unix_to_local unix2
-    in
-        Date.year date1
-            == Date.year date2
-            && Date.month date1
-            == Date.month date2
-            && Date.day date1
-            == Date.day date2
-
-
 pingFor : Int -> Ping
 pingFor unix =
     Ping unix [] NewObj
@@ -319,12 +302,6 @@ alwaysGetPing model unx =
 
         Just p ->
             p
-
-
-getCat : Model -> String -> Maybe Category
-getCat model name =
-    List.head <|
-        List.filter (\c -> strEq c.name name) model.cats
 
 
 getCatForTag : Model -> String -> Maybe Category
@@ -725,22 +702,6 @@ case_insensitive_cmp t1 t2 =
 
 
 {-|
-        outcome/
-Append the given element if not already present in the list
--}
-addNew : String -> List String -> List String
-addNew s l =
-    let
-        v =
-            String.trim s
-    in
-        if v == "" || member l v then
-            l
-        else
-            v :: l
-
-
-{-|
         understand/
 Because we are looking at merging potentially huge lists a naive
 implementation runs into the problem of "stack overflow". To help this
@@ -861,7 +822,7 @@ We need to keep abreast of the time so we keep updating ourselves every
 second.
 -}
 subscriptions : Model -> Sub Msg
-subscriptions model =
+subscriptions _ =
     -- TODO: once a second
     Sub.batch
         [ Time.every (Time.second * 30) OnTick
@@ -1027,7 +988,7 @@ update msg model =
             ( { model | dialog = Just (EditBricks v) }, Cmd.none )
 
         EditBricksDone ->
-            ( { model | dialog = Nothing, bricks = (stringbricks model) }, Cmd.none )
+            ( { model | dialog = Nothing, bricks = stringbricks model }, Cmd.none )
 
         ShowTODO ->
             ( { model | dialog = Just NotDone }, Cmd.none )
@@ -1070,10 +1031,10 @@ Helper function to construct a URL for the given api call
 apiURL : Consts -> String -> String
 apiURL consts api =
     let
-        apiURL =
+        url =
             consts.server_url ++ "/" ++ api
     in
-        apiURL ++ "?u=" ++ Http.encodeUri consts.uuid
+        url ++ "?u=" ++ Http.encodeUri consts.uuid
 
 
 {-|
@@ -1086,40 +1047,6 @@ imgURL consts img =
 
 
 {-|
-        situation/
-The user has pings that contain tags and categories under which tags are
-grouped. While all the tags should be grouped under appropriate
-categories it is quite possible that there are tags entered that do not
-fall under any category.
-
-        outcome/
-We gather the uncategorized tags into a list.
--}
-uncategorizedTags : Model -> List String
-uncategorizedTags model =
-    List.foldr
-        (\ping accum ->
-            List.foldr
-                (\tag accum ->
-                    let
-                        cat =
-                            getCatForTag model tag
-                    in
-                        case cat of
-                            Nothing ->
-                                addNew tag accum
-
-                            Just _ ->
-                                accum
-                )
-                accum
-                ping.tags
-        )
-        []
-        model.pings
-
-
-{-|
         outcome/
 We hide the window, clear any selections and reset any scrolls (category
 and ping list) to the top so the user can start fresh when a new ping
@@ -1129,12 +1056,13 @@ hideWindow : Model -> ( Model, Cmd Msg )
 hideWindow model =
     let
         m =
-            { model | current = [] }
+            loadRecentTags { model | current = [] }
 
         cmds =
             Cmd.batch
                 [ show "off"
                 , scrollTagListsToTop_1
+                , focusTagInput
                 ]
     in
         ( m, cmds )
@@ -1162,7 +1090,7 @@ scrollTagListsToTop_1 =
 
 catTagsId : Int -> String
 catTagsId num =
-    "cat-tags-" ++ (toString num)
+    "cat-tags-" ++ toString num
 
 
 pingListID : String
@@ -1232,7 +1160,7 @@ getSch : Model -> Cmd Msg
 getSch model =
     let
         sometime_today_12_hrs_unix =
-            (12 * 60 * 60)
+            12 * 60 * 60
 
         pfrom =
             case List.head (List.reverse model.pings) of
@@ -1290,7 +1218,7 @@ saveNewSch r model =
         Ok sch ->
             let
                 m =
-                    { model | sch = sch }
+                    { model | sch = List.append sch model.sch }
             in
                 ( addLatestPings m, Cmd.none )
 
@@ -1549,13 +1477,44 @@ onTick time model =
             syncWithServer <|
                 addLatestPings { model | last_tick = time }
 
-        show_ping_window =
-            if List.length m.pings == List.length model.pings then
-                Cmd.none
-            else
-                show "on"
+        window_to_be_shown =
+            List.length m.pings /= List.length model.pings
     in
-        ( m, Cmd.batch (show_ping_window :: cmds) )
+        if window_to_be_shown then
+            ensure_window_shown_1 m cmds
+        else
+            ( m, Cmd.batch cmds )
+
+
+{-|
+        outcome/
+Show the window, ensuring we have something selected and the focus is in
+the input field so we can just start typing.
+-}
+ensure_window_shown_1 : Model -> List (Cmd Msg) -> ( Model, Cmd Msg )
+ensure_window_shown_1 model cmds =
+    let
+        select_latest =
+            let
+                latest =
+                    case List.head model.pings of
+                        Nothing ->
+                            []
+
+                        Just p ->
+                            [ p.unix ]
+            in
+                { model | current = latest }
+
+        ensure_selection =
+            if List.isEmpty model.current then
+                select_latest
+            else
+                model
+    in
+        ( loadRecentTags ensure_selection
+        , Cmd.batch <| show "on" :: focusTagInput :: cmds
+        )
 
 
 {-|
@@ -1605,19 +1564,22 @@ merge_sch_and_pings_1 model =
         filt_for_show x =
             let
                 h =
-                    Maybe.withDefault 0 <| List.head model.sch
+                    Maybe.withDefault 0 <| List.head x
 
                 t =
-                    Maybe.withDefault 0 <| List.head (List.reverse model.sch)
+                    Maybe.withDefault 0 <| List.head (List.reverse x)
             in
-                List.filter
-                    (\u ->
-                        abs (u - h) < 60 * 60 * 5 || abs (u - t) < 60 * 60 * 5
-                    )
-                    x
+                toString (List.length x)
+                    :: (List.map dumpUnx <|
+                            List.filter
+                                (\u ->
+                                    abs (u - h) < 60 * 60 * 5 || abs (u - t) < 60 * 60 * 5
+                                )
+                                x
+                       )
 
         _ =
-            Debug.log "sch" (List.map dumpUnx <| filt_for_show model.sch)
+            Debug.log "sch" <| filt_for_show model.sch
 
         _ =
             Debug.log "now" (dumpUnx <| tick_to_unix model.last_tick)
@@ -1626,8 +1588,7 @@ merge_sch_and_pings_1 model =
             Debug.log "oldest" (dumpUnx oldest_ping_time)
 
         _ =
-            Debug.log "past_ping_times"
-                (List.map dumpUnx <| filt_for_show past_ping_times)
+            Debug.log "past_ping_times" <| filt_for_show past_ping_times
 
         oldest_ping_time =
             case List.head (List.reverse model.pings) of
@@ -1642,9 +1603,9 @@ merge_sch_and_pings_1 model =
                 (\unx ->
                     let
                         t =
-                            unix_to_tick unx
+                            Debug.log "t" <| unix_to_tick unx
                     in
-                        t <= model.last_tick && unx > oldest_ping_time
+                        t <= Debug.log "lt" model.last_tick && unx > oldest_ping_time
                 )
                 model.sch
 
@@ -1968,12 +1929,12 @@ updSavedStatus obj result =
         Ok _ ->
             OnServer
 
-        Err err ->
+        Err err_ ->
             let
                 msg =
                     "Saving " ++ obj ++ ": "
             in
-                case err of
+                case err_ of
                     Http.BadUrl url ->
                         Debug.log (msg ++ "Unexpected Error: 434 " ++ url) ServerSaysNo
 
@@ -2352,52 +2313,6 @@ update_pings_1 edit_tags model =
 
 {-|
         outcome/
-Mark any updated categories and pings.
--}
-mark_updated_entries_1 : Model -> Model -> Model
-mark_updated_entries_1 model m =
-    let
-        is_modified_cat cat =
-            case getCat model cat.name of
-                Nothing ->
-                    False
-
-                Just c ->
-                    sameTags c.tags cat.tags
-
-        is_modified_ping ping =
-            case getPing model ping.unix of
-                Nothing ->
-                    False
-
-                Just p ->
-                    sameTags p.tags ping.tags
-
-        updated_cats =
-            List.map
-                (\cat ->
-                    if is_modified_cat cat then
-                        { cat | saved = InMemory }
-                    else
-                        cat
-                )
-                m.cats
-
-        updated_pings =
-            List.map
-                (\ping ->
-                    if is_modified_ping ping then
-                        { ping | saved = InMemory }
-                    else
-                        ping
-                )
-                m.pings
-    in
-        { m | cats = updated_cats, pings = updated_pings }
-
-
-{-|
-        outcome/
 Discard any editing changes and remove the dialog
 -}
 editTagsCancel : Model -> ( Model, Cmd Msg )
@@ -2467,7 +2382,7 @@ match_existing_tag_1 model =
 
         first_match =
             Maybe.withDefault model.all_tags_filter <|
-                List.head (filtered_tags model)
+                List.head (filtered_tags model |> make_selectable_list model)
     in
         ( get_first_match, focusTagInput )
 
@@ -2493,7 +2408,7 @@ brickstring : Brick -> String
 brickstring brick =
     String.join " " <|
         brick.task
-            :: (List.map (\t -> "#" ++ t) brick.tags)
+            :: List.map (\t -> "#" ++ t) brick.tags
 
 
 stringbricks : Model -> List Brick
@@ -2553,15 +2468,20 @@ stringbricks_1 v =
                         String.trim tsk
 
         tags line =
-            let
-                rx =
-                    Regex.regex "#\\w+"
-            in
-                Regex.find Regex.All rx line
-                    |> List.map .match
-                    |> List.map (String.dropLeft 1)
+            Regex.find Regex.All tags_rx line
+                |> List.map .match
+                |> List.map (String.dropLeft 1)
     in
         bricks
+
+
+{-|
+        outcome/
+Extract tags from a "to be done/brick" line. Tags look #like #this
+-}
+tags_rx : Regex.Regex
+tags_rx =
+    Regex.regex "#\\w+"
 
 
 
@@ -3453,7 +3373,7 @@ energy_level_1 model =
             "ping-cat-energy.png"
     in
         Html.div [ style ]
-            [ category_head_1 model color icon "Energy Level"
+            [ category_head_1 color icon "Energy Level"
             , energy_level_tags_1 model
             ]
 
@@ -3565,8 +3485,8 @@ energy_icon_1 model tag icon =
         outcome/
 The 'head' of a category card
 -}
-category_head_1 : Model -> String -> String -> String -> Html.Html Msg
-category_head_1 model color icon txt =
+category_head_1 : String -> String -> String -> Html.Html Msg
+category_head_1 color icon txt =
     let
         iconstyle =
             HA.style
@@ -3612,7 +3532,7 @@ category_panel_1 model cat ndx =
                 ]
 
         color_ndx =
-            ndx % (List.length p.category_panel.header_colors)
+            ndx % List.length p.category_panel.header_colors
 
         head_color =
             Maybe.withDefault "white" <|
@@ -3633,7 +3553,7 @@ category_panel_1 model cat ndx =
             imgURL model.consts cat.icon
     in
         Html.div [ style ]
-            [ category_head_1 model head_color icon cat.name
+            [ category_head_1 head_color icon cat.name
             , category_tags_1 model body_color sel_color cat.tags ndx
             ]
 
@@ -4015,7 +3935,7 @@ project_pie_1 model =
                 ( [], 0 )
                 tag_counts
 
-        total_counts =
+        full_pie_data =
             if total < 16 then
                 ( 16 - total, "-" ) :: pie_data
             else
@@ -4031,7 +3951,7 @@ project_pie_1 model =
             , ( "font-size", px p.eat_pies.legend_font_sz )
             ]
     in
-        Chart.pie pie_data
+        Chart.pie full_pie_data
             |> Chart.updateStyles "chart" chart_style
             |> Chart.updateStyles "legend" legend_style
             |> Chart.toHtml
@@ -4102,7 +4022,7 @@ dialog_box model =
                     [ overlay_1 out_of_sight
                     , not_done_dialog_1 out_of_sight
                     , edit_tags_dialog_1 model [] out_of_sight
-                    , edit_bricks_dialog_1 model "" out_of_sight
+                    , edit_bricks_dialog_1 "" out_of_sight
                     ]
 
             Just NotDone ->
@@ -4110,7 +4030,7 @@ dialog_box model =
                     [ overlay_1 overlay_top_pos
                     , not_done_dialog_1 (top_pos p.dialog.not_done.height)
                     , edit_tags_dialog_1 model [] out_of_sight
-                    , edit_bricks_dialog_1 model "" out_of_sight
+                    , edit_bricks_dialog_1 "" out_of_sight
                     ]
 
             Just (EditTags edit_tags_data) ->
@@ -4121,7 +4041,7 @@ dialog_box model =
                         model
                         edit_tags_data
                         (top_pos p.dialog.edit_tags.height)
-                    , edit_bricks_dialog_1 model "" out_of_sight
+                    , edit_bricks_dialog_1 "" out_of_sight
                     ]
 
             Just (EditBricks v) ->
@@ -4129,7 +4049,7 @@ dialog_box model =
                     [ overlay_1 overlay_top_pos
                     , not_done_dialog_1 out_of_sight
                     , edit_tags_dialog_1 model [] out_of_sight
-                    , edit_bricks_dialog_1 model v (top_pos p.dialog.edit_bricks.height)
+                    , edit_bricks_dialog_1 v (top_pos p.dialog.edit_bricks.height)
                     ]
 
 
@@ -4315,7 +4235,7 @@ edit_tags_dialog_tag_1 model tag =
         ( _, color ) =
             Maybe.withDefault ( tag.cat, "red" ) <|
                 List.head <|
-                    List.filter (\( n, c ) -> strEq n tag.cat) color_names
+                    List.filter (\( n, _ ) -> strEq n tag.cat) color_names
 
         body_style =
             HA.style
@@ -4434,8 +4354,8 @@ edit_tags_dialog_footer_1 =
         Html.div [ style ] [ ok_btn, cancel_btn ]
 
 
-edit_bricks_dialog_1 : Model -> String -> Int -> Html.Html Msg
-edit_bricks_dialog_1 model v top_pos =
+edit_bricks_dialog_1 : String -> Int -> Html.Html Msg
+edit_bricks_dialog_1 v top_pos =
     let
         left_pos =
             (p.window.width - p.dialog.edit_bricks.width) // 2
@@ -4482,7 +4402,7 @@ golden_ratio =
 
 px : Int -> String
 px v =
-    (toString v) ++ "px"
+    toString v ++ "px"
 
 
 bg : String -> String
