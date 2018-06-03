@@ -3,39 +3,14 @@ port module Ping exposing (main)
 import Html
 import Html.Attributes as HA
 import Html.Events as HE
-import Http
 import Date
-import Json.Decode as Decode
-import Json.Encode as Encode
-import Time exposing (Time)
-import Task
+import Time
 import Dom
-import Regex
-import Dict
-import Chart
+import Task
 import Dom.Scroll as Scroll
-
-
-{--
-        understand/
-CSS names are global - defined anywhere they affect each other.
-
-        problem/
-We would like to modularize our styles.
-
-        way/
-We will use a prefix that is unlikely to be used anywhere else.
--}
-
-
-class : String -> Html.Attribute msg
-class name =
-    HA.class (classpfx_1 name)
-
-
-classpfx_1 : String -> String
-classpfx_1 name =
-    "tt-ping-" ++ name
+import Json.Decode as Decode
+import Chart
+import Dict
 
 
 {-|
@@ -43,23 +18,45 @@ classpfx_1 name =
 Main entry point of our program. Note that here we only declare our
 framework entry functions and do nothing else
 -}
-main : Program Consts Model Msg
+main : Program Never Model Msg
 main =
-    Html.programWithFlags
+    Html.program
         { init = init
-        , view = view
         , update = update
         , subscriptions = subscriptions
+        , view = view
         }
 
 
 {-|
         understand/
-These constants are supplied by the electron main process
+The main model of TEA - The Elm Architecture. Everything happening in
+our system (except for CSS animations) can be derived from this model so
+it will have a hodge-podge of everything we need to keep track of.
 -}
-type alias Consts =
-    { server_url : String
-    , uuid : String
+type alias Model =
+    { pings : List Ping
+    , bricks : List Brick
+    , cats : List Category
+    , tags : List Tag
+    , top_tags : List Tag
+    , current : List Unix
+    , shift_on : Bool
+    , ctrl_on : Bool
+    , input_tags : String
+    , input_tag_cat : String
+    , dialog : Maybe Dialog
+    }
+
+
+{-|
+        understand/
+A 'Ping' represents a sampling of what the user was doing at a given
+unix time.
+-}
+type alias Ping =
+    { unix : Unix
+    , tags : List Tag
     }
 
 
@@ -74,14 +71,6 @@ type alias Unix =
 
 {-|
         understand/
-The ping schedule for the user (in unix time)
--}
-type alias Sch =
-    List Unix
-
-
-{-|
-        understand/
 A "tag" represents a category of things being done at a given ping
 -}
 type alias Tag =
@@ -90,24 +79,12 @@ type alias Tag =
 
 {-|
         understand/
-We need to keep track of the status of the item:
-    a. Obtained from Server
-    b. Updated in memory
-    c. In-flight to server
-    e. Server Accepted == Obtained from Server
-    f. Server Rejected
-TODO: save locally as well so it works offline
+A 'Brick' represents an important task that has to be done today.
 -}
-type SyncStatus
-    = NewObj
-    | OnServer
-    | InMemory
-    | InFlight
-    | ServerSaysNo
-
-
-type alias SyncAble a =
-    { a | saved : SyncStatus }
+type alias Brick =
+    { task : String
+    , tags : List Tag
+    }
 
 
 {-|
@@ -123,11 +100,21 @@ data needs to be entered. In general categories match the the 5 W's:
 -}
 type alias Category =
     { name : String
-    , icon : String
     , tags : List Tag
-    , sort_order : Int
-    , saved : SyncStatus
+    , top_tags : List Tag
     }
+
+
+{-|
+        understand/
+List of dialog boxes to show
+-}
+type Dialog
+    = NotDone
+    | Loading
+    | EditTags (List EditingTag)
+    | EditBricks String
+    | CategorizeCurrentTag
 
 
 {-|
@@ -152,6 +139,31 @@ type alias EditingTag =
 
 
 {-|
+        outcome/
+Convert a tag into an EditingTag so that is can hold editing data
+-}
+editingTagFrom : Model -> Tag -> EditingTag
+editingTagFrom model tag =
+    let
+        cat =
+            List.foldr
+                (\cat acc ->
+                    if member cat.tags tag then
+                        cat.name
+                    else
+                        acc
+                )
+                ""
+                model.cats
+    in
+        { orig = tag
+        , name = tag
+        , cat = cat
+        , del = False
+        }
+
+
+{-|
         situation/
 The user has selected multiple items (pings) and we need to know if a
 given element (tag) is present in them.
@@ -168,699 +180,56 @@ type SelStatus
     | NoSelection
 
 
-{-|
-        understand/
-A 'Ping' represents a sampling of what the user was doing at a given
-unix time.
--}
-type alias Ping =
-    { unix : Int
-    , tags : List Tag
-    , saved : SyncStatus
-    }
+eSleep : String
+eSleep =
+    "-sleep"
 
 
-{-|
-        understand/
-A 'Brick' represents an important task that has to be done today.
--}
-type alias Brick =
-    { task : String
-    , tags : List Tag
-    }
+eHigh : String
+eHigh =
+    "-e-high"
 
 
-{-|
-        understand/
-List of dialog boxes to show
--}
-type Dialog
-    = NotDone
-    | EditTags (List EditingTag)
-    | EditBricks String
+eMed : String
+eMed =
+    "-e-med"
 
 
-{-|
-        understand/
-The main model of TEA - The Elm Architecture. Everything happening in
-our system (except for CSS animations) can be derived from this model so
-it will have a hodge-podge of everything we need to keep track of.
--}
-type alias Model =
-    { -- deployment data --
-      consts :
-        Consts
-        -- core data --
-    , sch :
-        Sch
-    , cats :
-        List Category
-    , pings :
-        List Ping
-    , bricks :
-        List Brick
-        -- server request status --
-    , get_sch_failed :
-        Bool
-    , get_cats_failed :
-        Bool
-    , get_pings_failed :
-        Bool
-        -- login req data --
-    , after_login :
-        List (Cmd Msg)
-    , login_req_in_flight :
-        Bool
-        -- tick data --
-    , last_tick :
-        Time
-        -- user action data --
-    , current :
-        List Unix
-    , shift_on :
-        Bool
-    , ctrl_on :
-        Bool
-        -- view helper data --
-    , recent_tags :
-        List Tag
-    , all_tags_filter :
-        String
-    , all_tags :
-        List Tag
-        -- dialog status data --
-    , dialog :
-        Maybe Dialog
-    }
+eLow : String
+eLow =
+    "-e-low"
 
 
-
-{--
-        understand/
-Helper functions for dealing with the model data
--}
+energyTags : List String
+energyTags =
+    [ eSleep, eHigh, eMed, eLow ]
 
 
-unix_to_local : Unix -> Date.Date
-unix_to_local unix =
-    Date.fromTime <| unix_to_tick unix
-
-
-unix_to_tick : Unix -> Time.Time
-unix_to_tick unix =
-    toFloat <| unix * 1000
-
-
-tick_to_unix : Time.Time -> Unix
-tick_to_unix t =
-    round <| t / 1000
-
-
-pingFor : Int -> Ping
-pingFor unix =
-    Ping unix [] NewObj
-
-
-getPing : Model -> Int -> Maybe Ping
-getPing model unx =
-    List.foldr
-        (\ping acc ->
-            if ping.unix == unx then
-                Just ping
-            else
-                acc
-        )
-        Nothing
-        model.pings
-
-
-alwaysGetPing : Model -> Int -> Ping
-alwaysGetPing model unx =
-    case getPing model unx of
-        Nothing ->
-            pingFor unx
-
-        Just p ->
-            p
-
-
-getCatForTag : Model -> String -> Maybe Category
-getCatForTag model tag =
-    List.foldr
-        (\cat acc ->
-            if member cat.tags tag then
-                Just cat
-            else
-                acc
-        )
-        Nothing
-        model.cats
-
-
-{-|
-        outcome/
-We keep a set of special tags (energy level, retro pings etc) and for
-these we start them off with a "-". This means that no normal tags can
-be allowed to start with "-".
--}
 specialTag : Tag -> Bool
-specialTag tag =
-    String.startsWith "-" tag
+specialTag t =
+    List.member t energyTags
 
 
 {-|
         outcome/
-Check if the given tag is in the current selection and return the status
+Initialize our model to start up.
 -}
-tagInSelection : Model -> String -> SelStatus
-tagInSelection model tag =
-    let
-        sel_pings =
-            List.map (alwaysGetPing model) model.current
-
-        in_ping p =
-            List.foldr
-                (\t acc -> acc || strEq t tag)
-                False
-                p.tags
-
-        in_all_sels =
-            List.foldr (\p acc -> acc && in_ping p) True sel_pings
-
-        in_any_sel =
-            List.foldr (\p acc -> acc || in_ping p) False sel_pings
-    in
-        if List.length sel_pings == 0 then
-            NoSelection
-        else if in_all_sels then
-            InAll
-        else if in_any_sel then
-            InSome
-        else
-            InNone
-
-
-{-|
-        outcome/
-We clean the ping tags, the category tags, and cache the list of "all
-available tags" for the user. This all helps when displaying in the view
-so this is best thought off as a view helper function.
--}
-cleanModelTags : Model -> Model
-cleanModelTags model =
-    let
-        clean_cats =
-            List.map (cleanTags model) model.cats
-
-        clean_pings =
-            List.map (cleanTags model) model.pings
-
-        m =
-            { model | pings = clean_pings, cats = clean_cats }
-
-        all_tags =
-            all_view_tags m
-    in
-        { m | all_tags = all_tags }
-
-
-{-|
-        outcome/
-Return a complete list of all tags derived from the categories and the
-pings (filtered by user seach string and sorted).  As this is for user
-selection we ignore "special" pings like energy tags, sleep, retro, etc
--}
-all_view_tags : Model -> List Tag
-all_view_tags model =
-    let
-        ignore =
-            specialTag
-
-        get_tags elems acc =
-            List.foldr
-                (\e accum ->
-                    List.foldr
-                        (\tag ac ->
-                            if member accum tag then
-                                ac
-                            else if ignore tag then
-                                ac
-                            else
-                                tag :: ac
-                        )
-                        accum
-                        e.tags
-                )
-                acc
-                elems
-
-        cat_tags =
-            get_tags model.cats []
-
-        tags =
-            get_tags model.pings cat_tags
-
-        all_tags =
-            cleanTags model { tags = tags }
-    in
-        all_tags.tags
-
-
-{-|
-        outcome/
-Apply any user filter and return the appropriate tags
--}
-filtered_tags : Model -> List Tag
-filtered_tags model =
-    let
-        normalize s =
-            String.toLower <| String.trim s
-
-        f =
-            normalize model.all_tags_filter
-
-        matches tag =
-            if String.isEmpty f then
-                True
-            else
-                String.contains f (normalize tag)
-    in
-        List.filter matches model.all_tags
-
-
-{-|
-        outcome/
-This is the EditingTag version of `filtered_tags`
--}
-filtered_edit_tags : Model -> List EditingTag -> List EditingTag
-filtered_edit_tags model etags =
-    let
-        normalize s =
-            String.toLower <| String.trim s
-
-        f =
-            normalize model.all_tags_filter
-
-        matches etag =
-            if String.isEmpty f then
-                True
-            else
-                String.contains f (normalize etag.orig)
-    in
-        List.filter matches etags
-
-
-{-|
-        outcome/
-We 'clean' the tag data by converting all equivalent tags to their
-"canonical" values, remove duplicates, and put them in alphabetical
-order.
--}
-cleanTags : Model -> { a | tags : List Tag } -> { a | tags : List Tag }
-cleanTags model elem =
-    let
-        empty tag =
-            String.isEmpty <| String.trim tag
-
-        clean orig =
-            List.foldr
-                (\t accum ->
-                    if member accum t || empty t then
-                        accum
-                    else
-                        get_canonical_tag model t :: accum
-                )
-                []
-                orig
-
-        order tags =
-            List.sortWith case_insensitive_cmp tags
-    in
-        { elem | tags = elem.tags |> clean |> order }
-
-
-{-|
-        outcome/
-We keep a tag list which can be used to speed up repeated entries from
-the recent and selected pings.
--}
-loadRecentTags : Model -> Model
-loadRecentTags model =
-    let
-        recent_tags =
-            get_recent_tags_1 model
-    in
-        { model | recent_tags = recent_tags }
-
-
-{-|
-        outcome/
-Take all the selection and the most recent handful of pings and gather
-all their tags in order.
--}
-get_recent_tags_1 : Model -> List Tag
-get_recent_tags_1 model =
-    let
-        accum_tags pings =
-            List.foldl
-                (\p accum ->
-                    List.foldl
-                        (\t acc ->
-                            if member acc t then
-                                acc
-                            else
-                                t :: acc
-                        )
-                        accum
-                        p.tags
-                )
-                []
-                pings
-
-        ping_handful =
-            List.append selected_pings handful_of_latest
-
-        selected_pings =
-            List.reverse model.current
-                |> List.map (alwaysGetPing model)
-
-        handful_of_latest =
-            List.take 20 model.pings
-    in
-        List.reverse <| accum_tags ping_handful
-
-
-{-|
-        problem/
-Given a set of recent tags and a taglist we must put them together in a
-way that allows users to easily select.
-
-        way/
-There are two main ways of making a list navigable:
-    1. By recency
-    2. By (alphabetical) order
-The recency list is usually much faster for a small number of elements
-but becomes confusing when there are more than a handful (let's use the
-magic number ten). After that an alphabetical ordering is best.
-
-Now the list given to us is expected to be in alphabetical order. All we
-need to do is put a set of recent tags in front of it. If the recent
-tags are too few or the remaining tags are too few then we should be
-careful to remove duplicates from the alphabetical list. On the other
-hand, if they are a lot then we should allow duplicates (the user will
-'switch modes' from recent to alphabetical in his search).
--}
-make_selectable_list : Model -> List Tag -> List Tag
-make_selectable_list model tags =
-    let
-        the_magic_number =
-            10
-
-        recent_tags =
-            List.filter (member tags) model.recent_tags
-
-        small_recent_tags =
-            List.take the_magic_number recent_tags
-
-        dedup_tags =
-            List.filter (\t -> not <| member small_recent_tags t) tags
-    in
-        if List.length recent_tags < the_magic_number then
-            List.append recent_tags dedup_tags
-        else if List.length dedup_tags < the_magic_number then
-            List.append small_recent_tags dedup_tags
-        else
-            List.append small_recent_tags tags
-
-
-{-|
-        situation/
-We have new data - pings or categories containing tag data.
-
-        problem/
-Tags are just strings so we need to ensure that they are not duplicated.
-
-People want to keep their tags according to what they have entered:
-    * If they enter "Dancing" they expect to see "Dancing" and not
-      "dancing" or "dAncing"
-However, they also:
-    * Expect "dancing", "dAncing", and "Dancing" to be the same tag
-      and not three different tags
-
-        way/
-The mental model the user will carry seem likely to be that the tags
-that are held by the categories are the 'master' tags. Hence we will use
-these as canonical.
--}
-get_canonical_tag : Model -> Tag -> Tag
-get_canonical_tag model tag =
-    List.foldr
-        (\cat accum ->
-            List.foldr
-                (\cat_tag acc ->
-                    if strEq cat_tag tag then
-                        cat_tag
-                    else
-                        acc
-                )
-                accum
-                cat.tags
-        )
-        tag
-        model.cats
-
-
-{-|
-        outcome/
-Convert a tag into so that is can hold editing data
--}
-editingTagFrom : Model -> Tag -> EditingTag
-editingTagFrom model tag =
-    let
-        cat =
-            case getCatForTag model tag of
-                Nothing ->
-                    ""
-
-                Just c ->
-                    c.name
-    in
-        { orig = tag
-        , name = tag
-        , cat = cat
-        , del = False
-        }
-
-
-{-|
-        outcome/
-Treat strings that people expect to be "the same" as equal rather than
-doing a "computer-like" character comparison. This applies to tags and
-categories.
--}
-strEq : String -> String -> Bool
-strEq t1 t2 =
-    let
-        tag1 =
-            normalize_str_1 t1
-
-        tag2 =
-            normalize_str_1 t2
-    in
-        tag1 == tag2
-
-
-normalize_str_1 : String -> String
-normalize_str_1 t =
-    String.toLower <| String.trim t
-
-
-{-|
-        outcome/
-Checks if the given string is a member of the list (using strEq)
--}
-member : List String -> String -> Bool
-member l s =
-    List.foldr
-        (\str accum ->
-            if strEq str s then
-                True
-            else
-                accum
-        )
-        False
-        l
-
-
-{-|
-        outcome/
-Do a case insensitive comparison for sorting
--}
-case_insensitive_cmp : Tag -> Tag -> Order
-case_insensitive_cmp t1 t2 =
-    compare (String.toLower t1) (String.toLower t2)
-
-
-{-|
-        understand/
-Because we are looking at merging potentially huge lists a naive
-implementation runs into the problem of "stack overflow". To help this
-out we create a helper function that takes an accumulator which helps
-the elm compiler to implement "tail-call optimization" and just drop the
-stack frames. This added complexity is where an iterative solution
-clearly wins over a functional one but - as we only use it when
-optimization is needed - we can learn to live with the added complexity.
-
-        problem/
-As we refresh data from the server we run into all the usual glorious
-issues with keeping things in sync.
-
-        way/
-Sync is painful and, with our knowledge of distributed systems, we now
-know there is no general solution. For our case, however, we can make
-some simplifying examples and that should get us a reasonable outcome.
-
-    1. If we have modified the data (data in-memory or in-flight) we
-    assume that's the latest version and don't update it.
-    2. If the data is from the server, we update it.
-    3. If the data has been rejected by the server, we assume the server
-    has a good reason so we force-update it. This means we need to
-    make sure we inform the user about server rejections otherwise she
-    will assume it has succeeded when it hasn't.
-
-NB: Both the input lists must be in descending order
--}
-sync_merge : (SyncAble a -> SyncAble a -> Order) -> List (SyncAble a) -> List (SyncAble a) -> List (SyncAble a)
-sync_merge cmp my svr =
-    sync_merge_1 cmp my svr []
-
-
-sync_merge_1 : (SyncAble a -> SyncAble a -> Order) -> List (SyncAble a) -> List (SyncAble a) -> List (SyncAble a) -> List (SyncAble a)
-sync_merge_1 cmp my svr res =
-    case ( my, svr ) of
-        ( _, [] ) ->
-            List.append (List.reverse res) my
-
-        ( [], _ ) ->
-            List.append (List.reverse res) svr
-
-        ( h_my :: t_my, h_svr :: t_svr ) ->
-            case cmp h_my h_svr of
-                GT ->
-                    sync_merge_1 cmp t_my svr (h_my :: res)
-
-                LT ->
-                    sync_merge_1 cmp my t_svr (h_svr :: res)
-
-                EQ ->
-                    case h_my.saved of
-                        NewObj ->
-                            sync_merge_1 cmp t_my t_svr (h_svr :: res)
-
-                        OnServer ->
-                            sync_merge_1 cmp t_my t_svr (h_svr :: res)
-
-                        InMemory ->
-                            sync_merge_1 cmp t_my t_svr (h_my :: res)
-
-                        InFlight ->
-                            sync_merge_1 cmp t_my t_svr (h_my :: res)
-
-                        ServerSaysNo ->
-                            sync_merge_1 cmp t_my t_svr (h_svr :: res)
-
-
-{-|
-        outcome/
-Initialize our model with the constants given by electron
--}
-init : Consts -> ( Model, Cmd Msg )
-init consts =
-    ( { consts = consts
-      , sch = []
+init : ( Model, Cmd Msg )
+init =
+    ( { pings = []
+      , bricks = []
       , cats = []
-      , pings = []
-      , bricks =
-            [ { task = "My most important task for today"
-              , tags = [ "tag1", "tag2" ]
-              }
-            , { task = "My second most important task for today"
-              , tags = [ "tag3", "tag4", "justaddtags" ]
-              }
-            , { task = "A task with no tags is a reminder"
-              , tags = []
-              }
-            , { task = "Sometimes we just need a scratchpad"
-              , tags = [ "inbox" ]
-              }
-            ]
-      , get_sch_failed = False
-      , get_cats_failed = False
-      , get_pings_failed = False
-      , after_login = []
-      , login_req_in_flight = False
-      , last_tick = 0
+      , tags = []
+      , top_tags = []
       , current = []
       , shift_on = False
       , ctrl_on = False
-      , recent_tags = []
-      , all_tags_filter = ""
-      , all_tags = []
-      , dialog = Nothing
+      , input_tags = ""
+      , input_tag_cat = ""
+      , dialog = Just Loading
       }
-    , Cmd.batch [ Task.perform OnTick Time.now, focusTagInput ]
+    , Cmd.none
     )
-
-
-{-|
-        understand/
-In addition to user interaction and HTTP events, we can "subscribe" to
-push events - timers and websockets.
-
-        outcome/
-We need to keep abreast of the time so we keep updating ourselves every
-second.
--}
-subscriptions : Model -> Sub Msg
-subscriptions _ =
-    -- TODO: once a second
-    Sub.batch
-        [ Time.every (Time.second * 30) OnTick
-        , splKeyActive OnSplKeyActivated
-        , splKeysReleased OnSplKeysReleased
-        ]
-
-
-
-{--
-        understand/
-In Elm any communication with JavaScript goes through a port. This is
-like a hole in the side of the Elm program where values go in and out.
-These work exactly like the commands and subscriptions
-    - Sending values out to JS is a command
-    - Listening for values coming in from JS is a subscription
--}
-
-
-{-|
-        understand/
-In order to show/hide our window we need to inform the electron main
-process to do it (elm can only mange a 'div-window' that we have created
-ourselves). Therefore we create a port through which we send a message
-asking the main process to show/hide our browser window.
--}
-port show : String -> Cmd msg
-
-
-{-|
-        understand/
-In order to get the status of special keys - shift and control - we use
-javascript as it has much better support than elm.
--}
-port splKeyActive : (String -> msg) -> Sub msg
-
-
-port splKeysReleased : (Bool -> msg) -> Sub msg
 
 
 
@@ -875,19 +244,20 @@ function because coupling should be reduced.
 
 
 type Msg
-    = SaveNewSch (Result Http.Error Sch)
-    | SaveNewCats (Result Http.Error (List Category))
-    | SaveNewPings (Result Http.Error (List Ping))
-    | AfterLogin (Result Http.Error ())
-    | OnTick Time
+    = SetLatestPings (List Ping)
+    | SetLatestCats (List Category)
+    | SetLatestBricks (List Brick)
+    | SetLatestTags (List Tag)
+    | SetLatestTopTags (List Tag)
+    | SetLatestSelection (List Unix)
+    | PrepareTo String
+    | LoadingDone Bool
     | OnSplKeyActivated String
     | OnSplKeysReleased Bool
     | ClickSelect Unix
     | SelectFirstPing
     | AddCurrentTag String
     | RemoveCurrentTag String
-    | ServerGotCat String (Result Http.Error ())
-    | ServerGotPing Int (Result Http.Error ())
     | HideWindow
     | OnScrollTagsUp (Result Dom.Error (List ()))
     | OnElementFocused (Result Dom.Error ())
@@ -902,6 +272,8 @@ type Msg
     | EditBricksDone
     | TagInputUpdated String
     | TagInputKeyDown Int
+    | TagCatInputUpdated String
+    | TagCatInputKeyDown Int
     | ShowTODO
     | HideTODO
 
@@ -909,20 +281,41 @@ type Msg
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
-        SaveNewSch r ->
-            saveNewSch r model
+        SetLatestPings pings ->
+            ( { model | pings = pings }, Cmd.none )
 
-        SaveNewCats r ->
-            saveNewCats r model
+        SetLatestCats cats ->
+            ( { model | cats = cats }, Cmd.none )
 
-        SaveNewPings r ->
-            saveNewPings r model
+        SetLatestBricks bricks ->
+            ( { model | bricks = bricks }, Cmd.none )
 
-        AfterLogin r ->
-            afterLogin r model
+        SetLatestTags tags ->
+            ( { model | tags = tags }, Cmd.none )
 
-        OnTick t ->
-            onTick t model
+        SetLatestTopTags tags ->
+            ( { model | top_tags = tags }, Cmd.none )
+
+        SetLatestSelection sels ->
+            ( { model | current = sels }, Cmd.none )
+
+        PrepareTo what ->
+            onPrepare what model
+
+        LoadingDone _ ->
+            finishedLoading model
+
+        TagInputUpdated f ->
+            tagInputUpdated f model
+
+        TagInputKeyDown key ->
+            tagInputKeyDown key model
+
+        TagCatInputUpdated f ->
+            tagCatInputUpdated f model
+
+        TagCatInputKeyDown key ->
+            tagCatInputKeyDown key model
 
         OnSplKeyActivated key ->
             onSplKeyActivated key model
@@ -937,19 +330,13 @@ update msg model =
             selectFirstPing model
 
         AddCurrentTag tag ->
-            addCurrentTag tag model
+            ( model, addTagsToSel [ tag ] )
 
         RemoveCurrentTag tag ->
-            removeCurrentTag tag model
-
-        ServerGotCat n r ->
-            serverGotCat n r model
-
-        ServerGotPing u r ->
-            serverGotPing u r model
+            ( model, rmTagsFromSel [ tag ] )
 
         HideWindow ->
-            hideWindow model
+            ( model, Cmd.batch [ show "off", setSel [] ] )
 
         OnScrollTagsUp r ->
             onScrollTagsUp r model
@@ -972,12 +359,6 @@ update msg model =
         EditTagsCancel ->
             editTagsCancel model
 
-        TagInputUpdated f ->
-            tagInputUpdated f model
-
-        TagInputKeyDown key ->
-            tagInputKeyDown key model
-
         AddBrick brick ->
             addBrick brick model
 
@@ -988,7 +369,7 @@ update msg model =
             ( { model | dialog = Just (EditBricks v) }, Cmd.none )
 
         EditBricksDone ->
-            ( { model | dialog = Nothing, bricks = stringbricks model }, Cmd.none )
+            ( { model | dialog = Nothing }, setBricks (stringbricks model) )
 
         ShowTODO ->
             ( { model | dialog = Just NotDone }, Cmd.none )
@@ -997,966 +378,248 @@ update msg model =
             ( { model | dialog = Nothing }, Cmd.none )
 
 
-{-|
-        understand/
-Elm doesn't have a keydown event (hopefully it's coming soon). However
-we can create our own event.
--}
-onKeyDown : (Int -> msg) -> Html.Attribute msg
-onKeyDown tagger =
-    HE.on "keydown" (Decode.map tagger HE.keyCode)
+onPrepare : String -> Model -> ( Model, Cmd Msg )
+onPrepare what model =
+    if what == "show" then
+        prepareToShow model
+    else
+        ( model, Cmd.none )
 
 
-{-|
-        outcome/
-Simple HTTP PUT request to our API
--}
-put : String -> Http.Body -> Http.Request ()
-put url body =
-    Http.request
-        { method = "PUT"
-        , headers = []
-        , url = url
-        , body = body
-        , expect = Http.expectStringResponse (\_ -> Ok ())
-        , timeout = Nothing
-        , withCredentials = False
-        }
-
-
-{-|
-        outcome/
-Helper function to construct a URL for the given api call
--}
-apiURL : Consts -> String -> String
-apiURL consts api =
+prepareToShow : Model -> ( Model, Cmd Msg )
+prepareToShow model =
     let
-        url =
-            consts.server_url ++ "/" ++ api
-    in
-        url ++ "?u=" ++ Http.encodeUri consts.uuid
-
-
-{-|
-        outcome/
-Helper function to construct a URL for the given image
--}
-imgURL : Consts -> String -> String
-imgURL consts img =
-    consts.server_url ++ img
-
-
-{-|
-        outcome/
-We hide the window, clear any selections and reset any scrolls (category
-and ping list) to the top so the user can start fresh when a new ping
-window pops up.
--}
-hideWindow : Model -> ( Model, Cmd Msg )
-hideWindow model =
-    let
-        m =
-            loadRecentTags { model | current = [] }
-
         cmds =
-            Cmd.batch
-                [ show "off"
-                , scrollTagListsToTop_1
-                , focusTagInput
-                ]
-    in
-        ( m, cmds )
-
-
-{-|
-        outcome/
-Scroll the ping list and all the category tags to the top so the user
-can see the most appropriate ones first.
-
-NB: The ping list and category tags must each be given a unique id
-(categories from 0 to 3) which are then used here.
--}
-scrollTagListsToTop_1 : Cmd Msg
-scrollTagListsToTop_1 =
-    let
-        cat_ids =
-            List.map catTagsId [ 0, 1, 2, 3 ]
-
-        scroll_cmds =
-            List.map Scroll.toTop (pingListID :: cat_ids)
-    in
-        Task.sequence scroll_cmds |> Task.attempt OnScrollTagsUp
-
-
-catTagsId : Int -> String
-catTagsId num =
-    "cat-tags-" ++ toString num
-
-
-pingListID : String
-pingListID =
-    "ping-list"
-
-
-onScrollTagsUp : Result Dom.Error (List ()) -> Model -> ( Model, Cmd Msg )
-onScrollTagsUp r model =
-    case r of
-        Err (Dom.NotFound id) ->
-            let
-                _ =
-                    Debug.log "Unexpected error 478: Unable to scroll" id
-            in
-                ( model, Cmd.none )
-
-        Ok _ ->
-            ( model, Cmd.none )
-
-
-{-|
-        problem/
-We want to autofocus the tag entry so that it is easy for the user to
-just start typing without using the mouse
-
-        way/
-We send a focus request to the id of the input field.
-
-NB: For this to work this id must be used when being displayed in the
-view.
--}
-focusTagInput : Cmd Msg
-focusTagInput =
-    Dom.focus tagInputID |> Task.attempt OnElementFocused
-
-
-tagInputID : String
-tagInputID =
-    "tag-input"
-
-
-onElementFocused : Result Dom.Error () -> Model -> ( Model, Cmd Msg )
-onElementFocused r model =
-    case r of
-        Err (Dom.NotFound id) ->
-            let
-                _ =
-                    Debug.log "Unexpected error 823: Unable to focus" id
-            in
-                ( model, Cmd.none )
-
-        Ok () ->
-            ( model, Cmd.none )
-
-
-{-|
-        problem/
-We want a useful ping schedule.
-
-        way/
-If we have made some ping entries we need the schedule from the first
-ping.  Otherwise we get some pings for today. If we already have the
-schedule upto a point we request from that point onward.
--}
-getSch : Model -> Cmd Msg
-getSch model =
-    let
-        sometime_today_12_hrs_unix =
-            12 * 60 * 60
-
-        pfrom =
-            case List.head (List.reverse model.pings) of
-                Just ping ->
-                    ping.unix
-
-                Nothing ->
-                    tick_to_unix model.last_tick - sometime_today_12_hrs_unix
-
-        from =
-            case List.head model.sch of
-                Just max_sch ->
-                    case List.head (List.reverse model.sch) of
-                        Just min_sch ->
-                            if max_sch > pfrom && pfrom >= min_sch then
-                                max_sch
-                            else
-                                pfrom
-
-                        Nothing ->
-                            pfrom
-
-                Nothing ->
-                    pfrom
-
-        u =
-            apiURL model.consts "api/sch"
-
-        url =
-            u ++ "&from=" ++ Http.encodeUri (toString from)
-
-        req =
-            Http.get url decodeSch
-    in
-        Http.send SaveNewSch req
-
-
-decodeSch : Decode.Decoder Sch
-decodeSch =
-    Decode.list Decode.int
-
-
-{-|
-        outcome/
-Process the latest ping schedule returned by the server. On error we
-mark that an error has taken place so that refreshServerData can try to
-reload it again.
-Having got the schedule, we check if we need to add any new pings for
-the user to enter.
-NB: We can optionally dump the schedule for debugging
--}
-saveNewSch : Result Http.Error Sch -> Model -> ( Model, Cmd Msg )
-saveNewSch r model =
-    case r of
-        Ok sch ->
-            let
-                m =
-                    { model | sch = List.append sch model.sch }
-            in
-                ( addLatestPings m, Cmd.none )
-
-        Err err ->
-            onHttpError err { model | get_sch_failed = True } (getSch model)
-
-
-{-|
-        outcome/
-Request the server for the latest category information
--}
-getCats : Consts -> Cmd Msg
-getCats consts =
-    let
-        url =
-            apiURL consts "api/cat"
-
-        req =
-            Http.get url decodeCats
-    in
-        Http.send SaveNewCats req
-
-
-decodeCats : Decode.Decoder (List Category)
-decodeCats =
-    let
-        to_cat name icon s_o tags =
-            { name = name
-            , icon = icon
-            , tags = tags
-            , sort_order = s_o
-            , saved = OnServer
-            }
-
-        decodeCat =
-            Decode.map4 to_cat
-                (Decode.field "name" Decode.string)
-                (Decode.field "icon" Decode.string)
-                (Decode.field "sort_order" Decode.int)
-                (Decode.field "tags" (Decode.list Decode.string))
-    in
-        Decode.list decodeCat
-
-
-{-|
-        outcome/
-Process the latest category data returned by the server (merge
-categories and clean tags). On error we mark that an error has taken
-place so that refreshServerData can try to reload it again.
--}
-saveNewCats : Result Http.Error (List Category) -> Model -> ( Model, Cmd Msg )
-saveNewCats r model =
-    case r of
-        Ok cats ->
-            let
-                u =
-                    sync_merge_cats_1 model.cats cats
-
-                m =
-                    cleanModelTags { model | cats = u }
-            in
-                ( m, Cmd.none )
-
-        Err err ->
-            onHttpError err { model | get_cats_failed = True } (getCats model.consts)
-
-
-{-|
-        outcome/
-So we sort the lists by name (sync_merge needs them in descending
-order), merge them together, then re-sort them by the sort order.
--}
-sync_merge_cats_1 : List Category -> List Category -> List Category
-sync_merge_cats_1 mycats svrcats =
-    let
-        s_mycats =
-            List.reverse <| List.sortBy .name mycats
-
-        s_svrcats =
-            List.reverse <| List.sortBy .name svrcats
-    in
-        List.sortBy .sort_order <|
-            sync_merge (\c1 c2 -> compare c1.name c2.name) s_mycats s_svrcats
-
-
-{-|
-        outcome/
-Request the server for the latest ping data
--}
-getPings : Consts -> Cmd Msg
-getPings consts =
-    let
-        url =
-            apiURL consts "api/ping"
-
-        req =
-            Http.get url decodePings
-    in
-        Http.send SaveNewPings req
-
-
-decodePings : Decode.Decoder (List Ping)
-decodePings =
-    let
-        decodePing =
-            Decode.map2 (\unix tags -> Ping unix tags OnServer)
-                (Decode.field "unix" Decode.int)
-                (Decode.field "tags" (Decode.list Decode.string))
-    in
-        Decode.list decodePing
-
-
-{-|
-        outcome/
-Process the latest ping data returned by the server (merge pings and
-clean tags). On error we mark that an error has taken place so that
-refreshServerData can try to reload it again.
-
-If we don't have a schedule yet, we are now in a position to make that
-call (fill in the schedule between the ping and now) so we launch that
-call if needed.
--}
-saveNewPings : Result Http.Error (List Ping) -> Model -> ( Model, Cmd Msg )
-saveNewPings r model =
-    case r of
-        Ok pings ->
-            let
-                u =
-                    sync_merge_pings_1 model.pings pings
-
-                m =
-                    cleanModelTags { model | pings = u }
-
-                cmd =
-                    if List.isEmpty model.sch then
-                        getSch m
-                    else
-                        Cmd.none
-            in
-                ( m, cmd )
-
-        Err err ->
-            onHttpError err { model | get_pings_failed = True } (getPings model.consts)
-
-
-{-|
-        outcome/
-So we merge the server and our lists together.
--}
-sync_merge_pings_1 : List Ping -> List Ping -> List Ping
-sync_merge_pings_1 mypings svrpings =
-    sync_merge (\p1 p2 -> compare p1.unix p2.unix) mypings svrpings
-
-
-
-{--
-        outcome/
-We wanted to perform an action but the server refused so now we're
-trying to login and perform that action after that.
-Because this can be called multiple times - all api's fail when we
-aren't logged in - we keep track of the fact we've already made a
-login request and don't try to do it again until it's complete.
--}
-
-
-onHttpError : Http.Error -> Model -> Cmd Msg -> ( Model, Cmd Msg )
-onHttpError err model cmd =
-    case err of
-        Http.BadStatus resp ->
-            if resp.status.code == httpStatusForbidden then
-                loginThen_1 cmd model
+            if List.isEmpty model.current then
+                case List.head <| List.reverse model.pings of
+                    Nothing ->
+                        Cmd.batch
+                            [ focusTagInput
+                            , scrollTagListsToTop_1
+                            ]
+
+                    Just ping ->
+                        Cmd.batch
+                            [ focusTagInput
+                            , scrollTagListsToTop_1
+                            , setSel [ ping.unix ]
+                            ]
             else
-                ( Debug.log (toString err) model, Cmd.none )
+                Cmd.batch
+                    [ focusTagInput
+                    , scrollTagListsToTop_1
+                    ]
+    in
+        ( model, cmds )
+
+
+finishedLoading : Model -> ( Model, Cmd Msg )
+finishedLoading model =
+    case model.dialog of
+        Just Loading ->
+            ( { model | dialog = Nothing }, Cmd.none )
 
         _ ->
-            ( Debug.log (toString err) model, Cmd.none )
+            ( model, Cmd.none )
 
 
-httpStatusForbidden : Int
-httpStatusForbidden =
-    403
+{-|
+        outcome/
+Update the "all tags" list to match the new filter
+-}
+tagInputUpdated : String -> Model -> ( Model, Cmd Msg )
+tagInputUpdated f model =
+    ( { model | input_tags = f }, Cmd.none )
 
 
-sameTags : List Tag -> List Tag -> Bool
-sameTags l1 l2 =
-    case ( l1, l2 ) of
-        ( [], [] ) ->
-            True
+{-|
+        outcome/
+Handle "enter", "escape", and "tab" keypress in the tag input field
+-}
+tagInputKeyDown : Int -> Model -> ( Model, Cmd Msg )
+tagInputKeyDown key model =
+    let
+        ( enter, esc, tab ) =
+            ( 13, 27, 9 )
+    in
+        if key == enter then
+            add_input_tag_1 model
+        else if key == esc then
+            clear_input_tag_1 model
+        else if key == tab then
+            match_existing_tag_1 model
+        else
+            ( model, Cmd.none )
 
-        ( _, [] ) ->
-            False
 
-        ( [], _ ) ->
-            False
-
-        ( h1 :: t1, h2 :: t2 ) ->
-            if h1 == h2 then
-                sameTags t1 t2
-            else
+add_input_tag_1 : Model -> ( Model, Cmd Msg )
+add_input_tag_1 model =
+    let
+        is_categorized_tag =
+            List.foldr
+                (\cat accum ->
+                    List.foldr
+                        (\t acc ->
+                            if strEq t model.input_tags then
+                                True
+                            else
+                                acc
+                        )
+                        accum
+                        cat.tags
+                )
                 False
-
-
-loginThen_1 : Cmd Msg -> Model -> ( Model, Cmd Msg )
-loginThen_1 msg model =
-    let
-        url =
-            apiURL model.consts "user"
-
-        req =
-            put url Http.emptyBody
-
-        m =
-            { model | after_login = msg :: model.after_login }
-    in
-        if m.login_req_in_flight then
-            ( m, Cmd.none )
-        else
-            ( { m | login_req_in_flight = True }, Http.send AfterLogin req )
-
-
-{-|
-        situtation/
-We have attempted an API call and the server replied saying we aren't
-logged in. So we need to login first then try again.
-
-        outcome/
-If we have logged in successfully, we retry all the calls that failed
-because we weren't logged in. We also turn off the flag that told us
-login was in flight.
--}
-afterLogin : Result Http.Error () -> Model -> ( Model, Cmd Msg )
-afterLogin r model =
-    let
-        m =
-            { model | login_req_in_flight = False }
-    in
-        case r of
-            Ok _ ->
-                ( m, Cmd.batch model.after_login )
-
-            Err err ->
-                ( Debug.log (toString err) m, Cmd.none )
-
-
-{-|
-        outcome/
-We update our current time and perform time-based events:
-    1. Update the ping list with the latest scheduled pings
-    2. Request the latest data from the server
-    3. If any new pings have been added, ensure that the window is shown
--}
-onTick : Time -> Model -> ( Model, Cmd Msg )
-onTick time model =
-    let
-        ( m, cmds ) =
-            syncWithServer <|
-                addLatestPings { model | last_tick = time }
-
-        window_to_be_shown =
-            List.length m.pings /= List.length model.pings
-    in
-        if window_to_be_shown then
-            ensure_window_shown_1 m cmds
-        else
-            ( m, Cmd.batch cmds )
-
-
-{-|
-        outcome/
-Show the window, ensuring we have something selected and the focus is in
-the input field so we can just start typing.
--}
-ensure_window_shown_1 : Model -> List (Cmd Msg) -> ( Model, Cmd Msg )
-ensure_window_shown_1 model cmds =
-    let
-        select_latest =
-            let
-                latest =
-                    case List.head model.pings of
-                        Nothing ->
-                            []
-
-                        Just p ->
-                            [ p.unix ]
-            in
-                { model | current = latest }
-
-        ensure_selection =
-            if List.isEmpty model.current then
-                select_latest
-            else
-                model
-    in
-        ( loadRecentTags ensure_selection
-        , Cmd.batch <| show "on" :: focusTagInput :: cmds
-        )
-
-
-{-|
-        problem/
-We have a ping schedule with pings stretching into the future. However,
-the user should have no clue as to when the next ping is coming from.
-
-        way/
-We add past pings to the list. Because the user is NOT expected to use
-his memory but only respond with what's being done "right now", if we
-were strict we should add only an immediately past ping. But we are more
-flexible and will add older pings which will allow the user to enter
-things like "sleep" and things they remember for the past couple of
-days until their last entry.
-
-        steps/
-1. If there are no user pings, get the last ping that is older than the
-current time.
-2. Otherwise get the list of scheduled pings older than the current time
-and younger than the last entered ping.
--}
-addLatestPings : Model -> Model
-addLatestPings model =
-    if List.isEmpty model.pings then
-        add_one_ping_1 model
-    else
-        merge_sch_and_pings_1 model
-
-
-add_one_ping_1 : Model -> Model
-add_one_ping_1 model =
-    let
-        valid_pings =
-            List.filter (\unx -> unix_to_tick unx <= model.last_tick) model.sch
-    in
-        case List.head valid_pings of
-            Nothing ->
-                model
-
-            Just unx ->
-                { model | pings = [ pingFor unx ] }
-
-
-merge_sch_and_pings_1 : Model -> Model
-merge_sch_and_pings_1 model =
-    let
-        filt_for_show x =
-            let
-                h =
-                    Maybe.withDefault 0 <| List.head x
-
-                t =
-                    Maybe.withDefault 0 <| List.head (List.reverse x)
-            in
-                toString (List.length x)
-                    :: (List.map dumpUnx <|
-                            List.filter
-                                (\u ->
-                                    abs (u - h) < 60 * 60 * 5 || abs (u - t) < 60 * 60 * 5
-                                )
-                                x
-                       )
-
-        _ =
-            Debug.log "sch" <| filt_for_show model.sch
-
-        _ =
-            Debug.log "now" (dumpUnx <| tick_to_unix model.last_tick)
-
-        _ =
-            Debug.log "oldest" (dumpUnx oldest_ping_time)
-
-        _ =
-            Debug.log "past_ping_times" <| filt_for_show past_ping_times
-
-        oldest_ping_time =
-            case List.head (List.reverse model.pings) of
-                Nothing ->
-                    0
-
-                Just p ->
-                    p.unix
-
-        past_ping_times =
-            List.filter
-                (\unx ->
-                    let
-                        t =
-                            Debug.log "t" <| unix_to_tick unx
-                    in
-                        t <= Debug.log "lt" model.last_tick && unx > oldest_ping_time
-                )
-                model.sch
-
-        u =
-            merge_1 past_ping_times model.pings
-    in
-        { model | pings = u }
-
-
-merge_1 : Sch -> List Ping -> List Ping
-merge_1 unx pings =
-    case ( unx, pings ) of
-        ( [], [] ) ->
-            []
-
-        ( _, [] ) ->
-            List.map pingFor unx
-
-        ( [], _ ) ->
-            pings
-
-        ( h_u :: t_u, h_p :: t_p ) ->
-            if h_u > h_p.unix then
-                pingFor h_u :: merge_1 t_u pings
-            else if h_u == h_p.unix then
-                h_p :: merge_1 t_u t_p
-            else
-                h_p :: merge_1 unx t_p
-
-
-{-|
-        outcome/
-Send any updates we have or, if nothing to send, get the latest updates
-from the server.
--}
-syncWithServer : Model -> ( Model, List (Cmd Msg) )
-syncWithServer model =
-    let
-        no_updates =
-            no_cat_updates && no_ping_updates
-
-        no_cat_updates =
-            List.isEmpty (List.filter modified model.cats)
-
-        no_ping_updates =
-            List.isEmpty (List.filter modified model.pings)
-
-        modified a =
-            case a.saved of
-                NewObj ->
-                    False
-
-                OnServer ->
-                    False
-
-                InMemory ->
-                    True
-
-                InFlight ->
-                    True
-
-                ServerSaysNo ->
-                    False
-    in
-        if no_updates then
-            refreshServerData model
-        else
-            sendUpdates model
-
-
-{-|
-        problem/
-We need to get the latest data from the server because we may have
-updated our data across multiple devices.
-
-        way/
-We can keep fetching data from the server.  However, we cannot blindly
-request data every millisecond as that would eat up our resources and be
-very badly behaved.
-
-We could ask at a reasonable interval - say every 5 minutes - and that
-would be almost perfect. However, it would show stale data for pings
-that came up within the interval period so if you entered data on your
-iPad and switched to your computer in the 5 minutes it would not show
-correctly.
-
-So we actually care about showing the latest data before a new ping.
-Since we care about this, we will make a call 30 seconds before every
-ping and hope that will give us the fresh data back in time.
-
-TODO: We should retrive schedule only a few times a week (not as often
-as user sync data)
-TODO: We should retry error fetches at increasing intervals (1sec, 5sec,
-30sec, 2mins,...)
--}
-refreshServerData : Model -> ( Model, List (Cmd Msg) )
-refreshServerData model =
-    let
-        consts =
-            model.consts
-
-        get_data =
-            [ getSch model, getCats consts, getPings consts ]
-
-        get_on_failure =
-            List.map (\( _, cmd ) -> cmd) <|
-                List.filter (\( failed, _ ) -> failed)
-                    [ ( model.get_sch_failed, getSch model )
-                    , ( model.get_cats_failed, getCats consts )
-                    , ( model.get_pings_failed, getPings consts )
-                    ]
-
-        m =
-            { model
-                | get_sch_failed = False
-                , get_cats_failed = False
-                , get_pings_failed = False
-            }
-
-        next_ping =
-            List.foldl
-                (\unx acc ->
-                    if unix_to_tick unx >= model.last_tick then
-                        Just unx
-                    else
-                        acc
-                )
-                Nothing
-                model.sch
-
-        ping_in_30_secs =
-            case next_ping of
-                Nothing ->
-                    True
-
-                Just unx ->
-                    let
-                        ms =
-                            unix_to_tick unx - model.last_tick
-                    in
-                        ms >= 30000 && ms < 30999
-    in
-        if ping_in_30_secs then
-            ( m, get_data )
-        else
-            ( m, get_on_failure )
-
-
-{-|
-        outcome/
-Send category updates and ping updates
-TODO: Batch updates?
--}
-sendUpdates : Model -> ( Model, List (Cmd Msg) )
-sendUpdates model =
-    let
-        updated a =
-            case a.saved of
-                InMemory ->
-                    True
-
-                _ ->
-                    False
-
-        cat_upd =
-            List.filter updated model.cats
-
-        ping_upd =
-            List.filter updated model.pings
-
-        cat_updates =
-            List.map (sendCatUpdate model) cat_upd
-
-        ping_updates =
-            List.map (sendPingUpdate model) ping_upd
-
-        updates =
-            List.append cat_updates ping_updates
-
-        in_flight a =
-            case a.saved of
-                InMemory ->
-                    { a | saved = InFlight }
-
-                _ ->
-                    a
-
-        cats_in_flight =
-            List.map in_flight model.cats
-
-        pings_in_flight =
-            List.map in_flight model.pings
-    in
-        ( { model | cats = cats_in_flight, pings = pings_in_flight }, updates )
-
-
-
-{--
-        outcome/
-Send category update request and handle response
--}
-
-
-sendCatUpdate : Model -> Category -> Cmd Msg
-sendCatUpdate model cat =
-    let
-        consts =
-            model.consts
-
-        url =
-            apiURL consts "api/cat"
-
-        body =
-            Http.jsonBody (encodeCat cat)
-
-        req =
-            put url body
-    in
-        Http.send (ServerGotCat cat.name) req
-
-
-encodeCat : Category -> Encode.Value
-encodeCat cat =
-    Encode.object
-        [ ( "name", Encode.string cat.name )
-        , ( "icon", Encode.string cat.icon )
-        , ( "sort_order", Encode.int cat.sort_order )
-        , ( "tags", Encode.list (List.map Encode.string cat.tags) )
-        ]
-
-
-serverGotCat : String -> Result Http.Error () -> Model -> ( Model, Cmd Msg )
-serverGotCat name r model =
-    let
-        saved =
-            updSavedStatus ("Category " ++ name) r
-
-        cats =
-            List.map
-                (\cat ->
-                    if strEq cat.name name then
-                        case cat.saved of
-                            InFlight ->
-                                { cat | saved = saved }
-
-                            _ ->
-                                cat
-                    else
-                        cat
-                )
                 model.cats
     in
-        ( { model | cats = cats }, Cmd.none )
+        if strEq "" model.input_tags then
+            ( model, Cmd.none )
+        else if is_categorized_tag then
+            add_input_tag_to_ping_1 model
+        else
+            categorize_tag_1 model
 
 
-
-{--
-        outcome/
-Send ping update request and handle response
--}
-
-
-sendPingUpdate : Model -> Ping -> Cmd Msg
-sendPingUpdate model ping =
+add_input_tag_to_ping_1 : Model -> ( Model, Cmd Msg )
+add_input_tag_to_ping_1 model =
     let
-        consts =
-            model.consts
-
-        url =
-            apiURL consts "api/ping"
-
-        body =
-            Http.jsonBody (encodePing ping)
-
-        req =
-            put url body
+        m =
+            { model | input_tags = "" }
     in
-        Http.send (ServerGotPing ping.unix) req
+        ( m, addTagsToSel [ model.input_tags ] )
 
 
-encodePing : Ping -> Encode.Value
-encodePing ping =
-    Encode.object
-        [ ( "unix", Encode.int ping.unix )
-        , ( "tags", Encode.list (List.map Encode.string ping.tags) )
-        ]
+categorize_tag_1 : Model -> ( Model, Cmd Msg )
+categorize_tag_1 model =
+    ( { model | dialog = Just CategorizeCurrentTag }, focusTagCatInput )
 
 
-serverGotPing : Int -> Result Http.Error () -> Model -> ( Model, Cmd Msg )
-serverGotPing unix r model =
-    let
-        saved =
-            updSavedStatus ("Ping " ++ toString (unix_to_local unix)) r
-
-        pings =
-            List.map
-                (\ping ->
-                    if ping.unix == unix then
-                        case ping.saved of
-                            InFlight ->
-                                { ping | saved = saved }
-
-                            _ ->
-                                ping
-                    else
-                        ping
-                )
-                model.pings
-    in
-        ( { model | pings = pings }, Cmd.none )
+clear_input_tag_1 : Model -> ( Model, Cmd Msg )
+clear_input_tag_1 model =
+    ( { model | input_tags = "" }, Cmd.none )
 
 
 {-|
         outcome/
-Returns the appropriate saved status for InFlight objects based on the
-Http response
+Update the "category tag" input entry
 -}
-updSavedStatus : String -> Result Http.Error () -> SyncStatus
-updSavedStatus obj result =
-    case result of
-        Ok _ ->
-            OnServer
+tagCatInputUpdated : String -> Model -> ( Model, Cmd Msg )
+tagCatInputUpdated f model =
+    ( { model | input_tag_cat = f }, Cmd.none )
 
-        Err err_ ->
+
+{-|
+        outcome/
+Handle "enter" and "escape"
+-}
+tagCatInputKeyDown : Int -> Model -> ( Model, Cmd Msg )
+tagCatInputKeyDown key model =
+    let
+        ( enter, esc ) =
+            ( 13, 27 )
+
+        m =
+            { model | input_tag_cat = "", dialog = Nothing }
+
+        u =
+            { m | input_tags = "" }
+    in
+        if key == enter then
+            set_tag_from_input_cat_1 model u
+        else if key == esc then
+            ( m, focusTagInput )
+        else
+            ( model, Cmd.none )
+
+
+{-|
+        problem/
+As the user types we would like to quickly narrow down the matching
+categories.
+
+        way/
+Return the list of categories that match the start of what the user has
+entered.
+-}
+getMatchingCats : Model -> List String
+getMatchingCats model =
+    let
+        pfx =
+            String.toLower <| String.trim model.input_tag_cat
+
+        matches ( n1, n2, _ ) =
             let
-                msg =
-                    "Saving " ++ obj ++ ": "
+                n_1 =
+                    String.toLower n1
+
+                n_2 =
+                    String.toLower n2
             in
-                case err_ of
-                    Http.BadUrl url ->
-                        Debug.log (msg ++ "Unexpected Error: 434 " ++ url) ServerSaysNo
+                String.startsWith pfx n_1 || String.startsWith pfx n_2
+    in
+        if String.isEmpty pfx then
+            []
+        else
+            List.map (\( n, _, _ ) -> n) <| List.filter matches show_cats
 
-                    Http.Timeout ->
-                        Debug.log (msg ++ "Timeout") InMemory
 
-                    Http.NetworkError ->
-                        Debug.log (msg ++ "Network error") InMemory
+{-|
+        outcome/
+If the user has narrowed the input down to a single matching category we
+return that. Othewise nothing
+-}
+getMatchingCat : Model -> Maybe String
+getMatchingCat model =
+    let
+        cats =
+            getMatchingCats model
+    in
+        case List.head cats of
+            Nothing ->
+                Nothing
 
-                    Http.BadStatus err ->
-                        let
-                            _ =
-                                Debug.log (msg ++ "Server Refused to Save") err
-                        in
-                            ServerSaysNo
+            Just cat ->
+                if List.length cats == 1 then
+                    Just cat
+                else
+                    Nothing
 
-                    Http.BadPayload err res ->
-                        let
-                            _ =
-                                Debug.log (msg ++ "Server sent bad response:" ++ err) res
-                        in
-                            InMemory
+
+{-|
+        outcome/
+-}
+set_tag_from_input_cat_1 : Model -> Model -> ( Model, Cmd Msg )
+set_tag_from_input_cat_1 model newmodel =
+    case getMatchingCat model of
+        Nothing ->
+            ( newmodel
+            , Cmd.batch [ focusTagInput, addTagsToSel [ model.input_tags ] ]
+            )
+
+        Just c ->
+            ( newmodel
+            , Cmd.batch
+                [ addTagToCat ( model.input_tags, c )
+                , focusTagInput
+                , addTagsToSel [ model.input_tags ]
+                ]
+            )
+
+
+{-|
+        outcome/
+We find the first match and populate the input with that value. Because
+tab causes us to spring out of the field we will re-bring focus back.
+-}
+match_existing_tag_1 : Model -> ( Model, Cmd Msg )
+match_existing_tag_1 model =
+    let
+        get_first_match =
+            { model | input_tags = first_match }
+
+        first_match =
+            Maybe.withDefault model.input_tags <| List.head (filtered_tags model)
+    in
+        ( get_first_match, focusTagInput )
 
 
 {-|
@@ -1966,9 +629,9 @@ control
 -}
 onSplKeyActivated : String -> Model -> ( Model, Cmd Msg )
 onSplKeyActivated key model =
-    if key == "shift" then
+    if key == "Shift" then
         ( { model | shift_on = True }, Cmd.none )
-    else if key == "control" then
+    else if key == "Control" then
         ( { model | ctrl_on = True }, Cmd.none )
     else
         ( model, Cmd.none )
@@ -2004,7 +667,7 @@ clickSelect unx model =
             else
                 [ unx ]
     in
-        ( loadRecentTags { model | current = current }, Cmd.none )
+        ( model, setSel current )
 
 
 shift_select_1 : Model -> Unix -> List Int
@@ -2063,96 +726,14 @@ selectFirstPing : Model -> ( Model, Cmd Msg )
 selectFirstPing model =
     let
         first_ping =
-            List.head model.pings
+            List.head <| List.reverse model.pings
     in
         case first_ping of
             Nothing ->
                 ( model, Cmd.none )
 
             Just p ->
-                ( { model | current = [ p.unix ] }, Cmd.none )
-
-
-addCurrentTag : String -> Model -> ( Model, Cmd Msg )
-addCurrentTag tag model =
-    ( addTagToCurrent tag model, Cmd.none )
-
-
-{-|
-        outcome/
-Add the tag to the current selections.
--}
-addTagToCurrent : String -> Model -> Model
-addTagToCurrent tag model =
-    let
-        add_tag_to_curr p =
-            if List.member p.unix model.current then
-                add_tag_1 model tag p
-            else
-                p
-
-        upd =
-            List.map add_tag_to_curr model.pings
-    in
-        cleanModelTags { model | pings = upd }
-
-
-{-|
-        problem/
-Adding a tag is reasonably simple except for two cases:
-    1. We do not want to add duplicate tags
-    2. Certain tags (like energy tags (-e-high) are exclusive - only one
-    can be present at any time.
-
-        outcome/
-We will first remove any matching tags then add the canonical version of
-tag,  re-sorting the list and marking the ping as updated.
--}
-add_tag_1 : Model -> Tag -> Ping -> Ping
-add_tag_1 model tag ping =
-    let
-        matching_tag t =
-            if member energyTags tag then
-                member energyTags t
-            else
-                strEq tag t
-
-        not_matching_tag t =
-            not (matching_tag t)
-
-        filtered =
-            List.filter not_matching_tag ping.tags
-
-        tags =
-            get_canonical_tag model tag :: filtered
-    in
-        { ping | tags = tags, saved = InMemory }
-
-
-{-|
-        outcome/
-Remove the current tag from the current selection
--}
-removeCurrentTag : String -> Model -> ( Model, Cmd Msg )
-removeCurrentTag tag model =
-    let
-        rm_tag_from_curr p =
-            if List.member p.unix model.current then
-                let
-                    u =
-                        List.filter (\t -> not <| strEq t tag) p.tags
-                in
-                    if List.length p.tags == List.length u then
-                        p
-                    else
-                        { p | tags = u, saved = InMemory }
-            else
-                p
-
-        upd =
-            List.map rm_tag_from_curr model.pings
-    in
-        ( { model | pings = upd }, Cmd.none )
+                ( model, setSel [ p.unix ] )
 
 
 {-|
@@ -2164,7 +745,7 @@ editTags : Model -> ( Model, Cmd Msg )
 editTags model =
     let
         edit_tags =
-            List.map (editingTagFrom model) model.all_tags
+            List.map (editingTagFrom model) model.tags
     in
         ( { model | dialog = Just (EditTags edit_tags) }, Cmd.none )
 
@@ -2222,10 +803,10 @@ edit_tags_done_1 edit_tags model =
                 |> update_pings_1 edit_tags
 
         all_tags =
-            all_view_tags m
+            m.tags
 
         u =
-            loadRecentTags { m | all_tags = all_tags }
+            { m | tags = all_tags }
     in
         ( { u | dialog = Nothing }, focusTagInput )
 
@@ -2246,10 +827,7 @@ update_cats_1 edit_tags model =
                 tags =
                     get_tags_for cat
             in
-                if sameTags cat.tags tags then
-                    cat
-                else
-                    { cat | tags = tags, saved = InMemory }
+                cat
 
         get_tags_for cat =
             List.foldr
@@ -2261,14 +839,8 @@ update_cats_1 edit_tags model =
                 )
                 []
                 edit_tags
-
-        m =
-            { model | cats = cats }
-
-        clean_cats =
-            List.map (cleanTags m) m.cats
     in
-        { m | cats = clean_cats }
+        { model | cats = cats }
 
 
 {-|
@@ -2292,10 +864,7 @@ update_pings_1 edit_tags model =
                 tags =
                     List.map rename_tag p.tags
             in
-                if sameTags p.tags tags then
-                    p
-                else
-                    cleanTags model { p | tags = tags, saved = InMemory }
+                p
 
         rename_tag tag =
             List.foldr
@@ -2320,95 +889,14 @@ editTagsCancel model =
     ( { model | dialog = Nothing }, focusTagInput )
 
 
-{-|
-        outcome/
-Update the "all tags" list to match the new filter
--}
-tagInputUpdated : String -> Model -> ( Model, Cmd Msg )
-tagInputUpdated f model =
-    if List.isEmpty model.current then
-        selectFirstPing model
-    else
-        ( { model | all_tags_filter = f }, Cmd.none )
-
-
-{-|
-        outcome/
-Handle "enter", "escape", and "tab" keypress in the tag input field
--}
-tagInputKeyDown : Int -> Model -> ( Model, Cmd Msg )
-tagInputKeyDown key model =
-    let
-        ( enter, esc, tab ) =
-            ( 13, 27, 9 )
-    in
-        if key == enter then
-            add_input_tag_1 model
-        else if key == esc then
-            clear_input_tag_1 model
-        else if key == tab then
-            match_existing_tag_1 model
-        else
-            ( model, Cmd.none )
-
-
-add_input_tag_1 : Model -> ( Model, Cmd Msg )
-add_input_tag_1 model =
-    let
-        m =
-            { model | all_tags_filter = "" }
-
-        add_current_tag =
-            addTagToCurrent model.all_tags_filter m
-    in
-        ( add_current_tag |> loadRecentTags, Cmd.none )
-
-
-clear_input_tag_1 : Model -> ( Model, Cmd Msg )
-clear_input_tag_1 model =
-    ( { model | all_tags_filter = "" }, Cmd.none )
-
-
-{-|
-        outcome/
-We find the first match and populate the input with that value. Because
-tab causes us to spring out of the field we will re-bring focus back.
--}
-match_existing_tag_1 : Model -> ( Model, Cmd Msg )
-match_existing_tag_1 model =
-    let
-        get_first_match =
-            { model | all_tags_filter = first_match }
-
-        first_match =
-            Maybe.withDefault model.all_tags_filter <|
-                List.head (filtered_tags model |> make_selectable_list model)
-    in
-        ( get_first_match, focusTagInput )
-
-
 addBrick : Brick -> Model -> ( Model, Cmd Msg )
 addBrick brick model =
-    let
-        m =
-            List.foldr (\t accum -> addTagToCurrent t accum) model brick.tags
-    in
-        if List.isEmpty model.current then
-            selectFirstPing model
-        else
-            ( loadRecentTags m, Cmd.none )
+    ( model, addTagsToSel brick.tags )
 
 
 bricks2v : Model -> String
 bricks2v model =
-    String.join "\n\n" (List.map brickstring model.bricks)
-
-
-brickstring : Brick -> String
-brickstring brick =
-    String.join " " <|
-        brick.task
-            :: List.map (\t -> "#" ++ t) brick.tags
+    String.join "\n\n" (List.map .task model.bricks)
 
 
 stringbricks : Model -> List Brick
@@ -2427,61 +915,242 @@ stringbricks_1 v =
         lines =
             String.split "\n\n" v
 
-        bricks =
-            List.foldr
-                (\l accum ->
-                    case brick l of
-                        Nothing ->
-                            accum
-
-                        Just b ->
-                            b :: accum
-                )
-                []
-                lines
-
         brick line =
             let
                 tsk =
-                    task line
-
-                l2brick =
-                    { task = tsk
-                    , tags = tags line
-                    }
+                    String.trim line
             in
                 if String.isEmpty tsk then
                     Nothing
                 else
-                    Just l2brick
-
-        task line =
-            let
-                s =
-                    String.split "#" line
-            in
-                case List.head s of
-                    Nothing ->
-                        ""
-
-                    Just tsk ->
-                        String.trim tsk
-
-        tags line =
-            Regex.find Regex.All tags_rx line
-                |> List.map .match
-                |> List.map (String.dropLeft 1)
+                    Just { task = tsk, tags = [] }
     in
-        bricks
+        List.foldr
+            (\l accum ->
+                case brick l of
+                    Nothing ->
+                        accum
+
+                    Just b ->
+                        b :: accum
+            )
+            []
+            lines
+
+
+{-|
+        understand/
+In addition to user interaction and HTTP events, we can "subscribe" to
+push events - timers, websockets, and javascript communication.
+-}
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.batch
+        [ latestPings SetLatestPings
+        , latestCats SetLatestCats
+        , latestBricks SetLatestBricks
+        , latestTags SetLatestTags
+        , latestTopTags SetLatestTopTags
+        , latestSel SetLatestSelection
+        , prepareTo PrepareTo
+        , loadingDone LoadingDone
+        , splKeyActive OnSplKeyActivated
+        , splKeysReleased OnSplKeysReleased
+        ]
+
+
+
+{--
+        understand/
+In Elm any communication with JavaScript goes through a port. This is
+like a hole in the side of the Elm program where values go in and out.
+These work exactly like the commands and subscriptions
+    - Sending values out to JS is a command
+    - Listening for values coming in from JS is a subscription
+-}
+
+
+{-|
+        understand/
+In order to show/hide our window we need to inform the electron main
+process to do it (elm can only mange a 'div-window' that we have created
+ourselves). Therefore we create a port through which we send a message
+asking the main process to show/hide our browser window.
+-}
+port show : String -> Cmd msg
+
+
+{-|
+        understand/
+Hooks that let us prepare.
+-}
+port prepareTo : (String -> msg) -> Sub msg
+
+
+{-|
+        understand/
+Javascript has finished the initial loading
+-}
+port loadingDone : (Bool -> msg) -> Sub msg
+
+
+{-|
+        understand/
+We send our updates to javascript and receive updated data.
+-}
+port latestPings : (List Ping -> msg) -> Sub msg
+
+
+port latestCats : (List Category -> msg) -> Sub msg
+
+
+port latestBricks : (List Brick -> msg) -> Sub msg
+
+
+port latestTags : (List Tag -> msg) -> Sub msg
+
+
+port latestTopTags : (List Tag -> msg) -> Sub msg
+
+
+port latestSel : (List Unix -> msg) -> Sub msg
+
+
+port setSel : List Unix -> Cmd msg
+
+
+port addTagsToSel : List Tag -> Cmd msg
+
+
+port rmTagsFromSel : List Tag -> Cmd msg
+
+
+port addTagToCat : ( Tag, String ) -> Cmd msg
+
+
+port setBricks : List Brick -> Cmd msg
+
+
+{-|
+        understand/
+In order to get the status of special keys - shift, control, alt, meta,
+arrowleft... - we use javascript as it has much better support than elm.
+-}
+port splKeyActive : (String -> msg) -> Sub msg
+
+
+port splKeysReleased : (Bool -> msg) -> Sub msg
+
+
+{-|
+        understand/
+Javascript errors are sent to us so we can show them etc
+-}
+port errormsg : (String -> msg) -> Sub msg
+
+
+{-|
+        problem/
+We want to autofocus the tag entry so that it is easy for the user to
+just start typing without using the mouse
+
+        way/
+We send a focus request to the id of the input field.
+
+NB: For this to work this id must be used when being displayed in the
+view.
+-}
+focusTagInput : Cmd Msg
+focusTagInput =
+    Dom.focus tagInputID |> Task.attempt OnElementFocused
+
+
+tagInputID : String
+tagInputID =
+    "tag-input"
+
+
+onElementFocused : Result Dom.Error () -> Model -> ( Model, Cmd Msg )
+onElementFocused r model =
+    case r of
+        Err (Dom.NotFound id) ->
+            let
+                _ =
+                    Debug.log "Unexpected error 823: Unable to focus" id
+            in
+                ( model, Cmd.none )
+
+        Ok () ->
+            ( model, Cmd.none )
 
 
 {-|
         outcome/
-Extract tags from a "to be done/brick" line. Tags look #like #this
+Similart to `focusTagInput` but we want to focus on the Tag Category
+field
 -}
-tags_rx : Regex.Regex
-tags_rx =
-    Regex.regex "#\\w+"
+focusTagCatInput : Cmd Msg
+focusTagCatInput =
+    Dom.focus tagCatInputID |> Task.attempt OnElementFocused
+
+
+tagCatInputID : String
+tagCatInputID =
+    "tag-cat-input"
+
+
+{-|
+        outcome/
+Scroll the ping list and all the category tags to the top so the user
+can see the most appropriate ones first.
+
+NB: The ping list and category tags must each be given a unique id
+(categories from 0 to 3) which are then used here.
+-}
+scrollTagListsToTop_1 : Cmd Msg
+scrollTagListsToTop_1 =
+    let
+        cat_ids =
+            List.map catTagsId [ 0, 1, 2, 3 ]
+
+        scroll_cmds =
+            List.map Scroll.toTop (pingListID :: cat_ids)
+    in
+        Task.sequence scroll_cmds |> Task.attempt OnScrollTagsUp
+
+
+catTagsId : Int -> String
+catTagsId num =
+    "cat-tags-" ++ toString num
+
+
+pingListID : String
+pingListID =
+    "ping-list"
+
+
+onScrollTagsUp : Result Dom.Error (List ()) -> Model -> ( Model, Cmd Msg )
+onScrollTagsUp r model =
+    case r of
+        Err (Dom.NotFound id) ->
+            let
+                _ =
+                    Debug.log "Unexpected error 478: Unable to scroll" id
+            in
+                ( model, Cmd.none )
+
+        Ok _ ->
+            ( model, Cmd.none )
+
+
+{-|
+        understand/
+Elm doesn't have a keydown event (hopefully it's coming soon). However
+we can create our own event.
+-}
+onKeyDown : (Int -> msg) -> Html.Attribute msg
+onKeyDown tagger =
+    HE.on "keydown" (Decode.map tagger HE.keyCode)
 
 
 
@@ -2682,6 +1351,15 @@ type alias ViewParams =
         }
     , dialog :
         { transition : String
+        , loading :
+            { icon_width : Int
+            , title_font_sz : Int
+            , subtitle_font_sz : Int
+            , subtitle_font_weight : String
+            , subtitle_color : String
+            , subtitle_margin : Int
+            , subtitle_left : Int
+            }
         , not_done :
             { width : Int
             , height : Int
@@ -2719,6 +1397,22 @@ type alias ViewParams =
         , edit_bricks :
             { width : Int
             , height : Int
+            }
+        , cat_curr :
+            { top : Int
+            , left : Int
+            , width : Int
+            , height : Int
+            , background : String
+            , padding : Int
+            , border_radius : Int
+            , box_shadow : String
+            , title :
+                { height : Int }
+            , line :
+                { height : Int
+                , icon_width : Int
+                }
             }
         }
     }
@@ -2964,6 +1658,15 @@ p =
 
         dialog =
             { transition = "top 350ms ease-in-out"
+            , loading =
+                { icon_width = 41
+                , title_font_sz = 64
+                , subtitle_font_sz = 12
+                , subtitle_font_weight = "200"
+                , subtitle_color = "grey"
+                , subtitle_margin = 8
+                , subtitle_left = 8
+                }
             , not_done =
                 { width = 256
                 , height = 96
@@ -3002,7 +1705,42 @@ p =
                 { width = 256
                 , height = 256
                 }
+            , cat_curr =
+                { top = cat_curr_top
+                , left = cat_curr_left
+                , width = cat_curr_width
+                , height = cat_curr_height
+                , background = "linear-gradient(white, #cacaca)"
+                , padding = 10
+                , border_radius = 6
+                , box_shadow = "1px 1px 3px 0px black"
+                , title = { height = cat_curr_title_height }
+                , line =
+                    { height = cat_curr_line_height
+                    , icon_width = 24
+                    }
+                }
             }
+
+        cat_curr_top =
+            (window.height - cat_curr_height) // 2
+
+        cat_curr_left =
+            (window.width - cat_curr_width) // 2
+
+        cat_curr_width =
+            128
+
+        cat_curr_height =
+            cat_curr_title_height
+                + cat_curr_line_height
+                * List.length show_cats
+
+        cat_curr_title_height =
+            48
+
+        cat_curr_line_height =
+            32
     in
         { scrollbar_offset = scrollbar_offset
         , window = window
@@ -3198,7 +1936,7 @@ ping_list_1 model =
                 ]
 
         pings =
-            List.take 50 model.pings
+            List.reverse model.pings
     in
         Html.div [ style, HA.id pingListID ]
             [ Html.table
@@ -3318,17 +2056,55 @@ edit_area_1 model =
 
 {-|
         outcome/
-We show the four categories with all their tags and the "energy-level"
-catgory.
+We show the five categories with all their tags.
 -}
 category_panels_1 : Model -> Html.Html Msg
 category_panels_1 model =
     let
+        cats =
+            get_model_cats_1 model.cats
+
         ndx =
-            List.range 0 (List.length model.cats - 1)
+            List.range 0 (List.length cats - 1)
     in
         Html.div []
-            (energy_level_1 model :: List.map2 (category_panel_1 model) model.cats ndx)
+            (energy_level_1 model :: List.map2 (category_panel_1 model) cats ndx)
+
+
+{-|
+        outcome/
+We display four categories in this view:
+    * Activities
+    * Projects
+    * People
+    * Places
+Find and return these categories from our list.
+-}
+show_cats : List ( String, String, String )
+show_cats =
+    [ ( "Activities", "Activity", "ping-cat-activities.png" )
+    , ( "Projects", "Project", "ping-cat-projects.png" )
+    , ( "People", "Person", "ping-cat-people.png" )
+    , ( "Places", "Place", "ping-cat-places.png" )
+    ]
+
+
+get_model_cats_1 : List Category -> List ( Category, String )
+get_model_cats_1 cats =
+    List.map
+        (\( n, _, i ) ->
+            let
+                matching =
+                    List.filter (\c -> strEq c.name n) cats
+            in
+                case List.head matching of
+                    Nothing ->
+                        ( { name = n, tags = [], top_tags = [] }, i )
+
+                    Just c ->
+                        ( c, i )
+        )
+        show_cats
 
 
 {-|
@@ -3376,31 +2152,6 @@ energy_level_1 model =
             [ category_head_1 color icon "Energy Level"
             , energy_level_tags_1 model
             ]
-
-
-eSleep : String
-eSleep =
-    "-sleep"
-
-
-eHigh : String
-eHigh =
-    "-e-high"
-
-
-eMed : String
-eMed =
-    "-e-med"
-
-
-eLow : String
-eLow =
-    "-e-low"
-
-
-energyTags : List String
-energyTags =
-    [ eSleep, eHigh, eMed, eLow ]
 
 
 energy_level_tags_1 : Model -> Html.Html Msg
@@ -3516,8 +2267,8 @@ category_head_1 color icon txt =
             ]
 
 
-category_panel_1 : Model -> Category -> Int -> Html.Html Msg
-category_panel_1 model cat ndx =
+category_panel_1 : Model -> ( Category, String ) -> Int -> Html.Html Msg
+category_panel_1 model ( cat, icon ) ndx =
     let
         left =
             p.category_panel.width * ndx
@@ -3548,13 +2299,15 @@ category_panel_1 model cat ndx =
             Maybe.withDefault "black" <|
                 List.head <|
                     List.drop color_ndx p.category_panel.sel_colors
-
-        icon =
-            imgURL model.consts cat.icon
     in
         Html.div [ style ]
             [ category_head_1 head_color icon cat.name
-            , category_tags_1 model body_color sel_color cat.tags ndx
+            , category_tags_1
+                model
+                body_color
+                sel_color
+                (selectableTags cat.tags cat.top_tags)
+                ndx
             ]
 
 
@@ -3574,12 +2327,9 @@ category_tags_1 model bg_color sel_tag_color tags ndx =
                 , ( "overflow", "scroll" )
                 , ( "box-shadow", p.category_panel.body_box )
                 ]
-
-        sel_tags =
-            make_selectable_list model tags
     in
         Html.div [ style, HA.id (catTagsId ndx) ]
-            (List.map (category_tag_1 model sel_tag_color) sel_tags)
+            (List.map (category_tag_1 model sel_tag_color) tags)
 
 
 category_tag_1 : Model -> String -> String -> Html.Html Msg
@@ -3693,7 +2443,7 @@ tag_input_1 model =
         Html.input
             [ style
             , HA.id tagInputID
-            , HA.value model.all_tags_filter
+            , HA.value model.input_tags
             , HE.onInput TagInputUpdated
             , onKeyDown TagInputKeyDown
             ]
@@ -3729,7 +2479,7 @@ tags_1 model =
                 ]
 
         tags =
-            filtered_tags model |> make_selectable_list model
+            filtered_tags model
     in
         Html.div [ style ] (List.map (show_tag_1 model) tags)
 
@@ -3847,7 +2597,7 @@ brick_1 brick =
                 ]
     in
         Html.li [ style, class "brick-item", HE.onClick (AddBrick brick) ]
-            [ Html.text (brickstring brick) ]
+            [ Html.text brick.task ]
 
 
 {-|
@@ -4020,36 +2770,64 @@ dialog_box model =
             Nothing ->
                 Html.div []
                     [ overlay_1 out_of_sight
+                    , loading_dialog_1 out_of_sight
                     , not_done_dialog_1 out_of_sight
                     , edit_tags_dialog_1 model [] out_of_sight
                     , edit_bricks_dialog_1 "" out_of_sight
+                    , categorize_current_tag_1 Nothing
+                    ]
+
+            Just Loading ->
+                Html.div []
+                    [ overlay_1 out_of_sight
+                    , loading_dialog_1 overlay_top_pos
+                    , not_done_dialog_1 out_of_sight
+                    , edit_tags_dialog_1 model [] out_of_sight
+                    , edit_bricks_dialog_1 "" out_of_sight
+                    , categorize_current_tag_1 Nothing
                     ]
 
             Just NotDone ->
                 Html.div []
                     [ overlay_1 overlay_top_pos
+                    , loading_dialog_1 out_of_sight
                     , not_done_dialog_1 (top_pos p.dialog.not_done.height)
                     , edit_tags_dialog_1 model [] out_of_sight
                     , edit_bricks_dialog_1 "" out_of_sight
+                    , categorize_current_tag_1 Nothing
                     ]
 
             Just (EditTags edit_tags_data) ->
                 Html.div []
                     [ overlay_1 overlay_top_pos
+                    , loading_dialog_1 out_of_sight
                     , not_done_dialog_1 out_of_sight
                     , edit_tags_dialog_1
                         model
                         edit_tags_data
                         (top_pos p.dialog.edit_tags.height)
                     , edit_bricks_dialog_1 "" out_of_sight
+                    , categorize_current_tag_1 Nothing
                     ]
 
             Just (EditBricks v) ->
                 Html.div []
                     [ overlay_1 overlay_top_pos
+                    , loading_dialog_1 out_of_sight
                     , not_done_dialog_1 out_of_sight
                     , edit_tags_dialog_1 model [] out_of_sight
                     , edit_bricks_dialog_1 v (top_pos p.dialog.edit_bricks.height)
+                    , categorize_current_tag_1 Nothing
+                    ]
+
+            Just CategorizeCurrentTag ->
+                Html.div []
+                    [ overlay_1 overlay_top_pos
+                    , loading_dialog_1 out_of_sight
+                    , not_done_dialog_1 out_of_sight
+                    , edit_tags_dialog_1 model [] out_of_sight
+                    , edit_bricks_dialog_1 "" out_of_sight
+                    , categorize_current_tag_1 (Just model)
                     ]
 
 
@@ -4068,6 +2846,57 @@ overlay_1 top_pos =
                 ]
     in
         Html.div [ style ] []
+
+
+{-|
+        outcome/
+Show the 'loading' icon
+-}
+loading_dialog_1 : Int -> Html.Html Msg
+loading_dialog_1 top_pos =
+    let
+        style =
+            HA.style
+                [ ( "position", "absolute" )
+                , ( "top", px top_pos )
+                , ( "width", px p.window.width )
+                , ( "height", px p.window.height )
+                , ( "background", "white" )
+                , ( "opacity", "0.9" )
+                , ( "display", "flex" )
+                , ( "align-items", "center" )
+                , ( "justify-content", "center" )
+                , ( "text-align", "center" )
+                ]
+
+        img_style =
+            HA.style
+                [ ( "width", px p.dialog.loading.icon_width )
+                ]
+
+        title_style =
+            HA.style
+                [ ( "font-size", px p.dialog.loading.title_font_sz )
+                , ( "font-family", "'Sacramento', cursive" )
+                ]
+
+        subtitle_style =
+            HA.style
+                [ ( "font-size", px p.dialog.loading.subtitle_font_sz )
+                , ( "font-weight", p.dialog.loading.subtitle_font_weight )
+                , ( "color", p.dialog.loading.subtitle_color )
+                , ( "margin", px p.dialog.loading.subtitle_margin )
+                , ( "position", "relative" )
+                , ( "left", px p.dialog.loading.subtitle_left )
+                ]
+    in
+        Html.div [ style ]
+            [ Html.div []
+                [ Html.div [ title_style ] [ Html.text "Tag Time" ]
+                , Html.img [ img_style, HA.src "ping-loading.gif" ] []
+                , Html.div [ subtitle_style ] [ Html.text "Loading . . ." ]
+                ]
+            ]
 
 
 {-|
@@ -4388,6 +3217,102 @@ edit_bricks_dialog_1 v top_pos =
             ]
 
 
+categorize_current_tag_1 : Maybe Model -> Html.Html Msg
+categorize_current_tag_1 model =
+    case model of
+        Nothing ->
+            Html.text ""
+
+        Just m ->
+            cat_curr_diag_1 m
+
+
+cat_curr_diag_1 : Model -> Html.Html Msg
+cat_curr_diag_1 model =
+    let
+        style =
+            HA.style
+                [ ( "position", "absolute" )
+                , ( "top", px p.dialog.cat_curr.top )
+                , ( "left", px p.dialog.cat_curr.left )
+                , ( "width", px p.dialog.cat_curr.width )
+                , ( "height", px p.dialog.cat_curr.height )
+                , ( "background", p.dialog.cat_curr.background )
+                , ( "padding", px p.dialog.cat_curr.padding )
+                , ( "border-radius", px p.dialog.cat_curr.border_radius )
+                , ( "box-shadow", p.dialog.cat_curr.box_shadow )
+                ]
+    in
+        Html.div [ style ]
+            [ cat_curr_title_1 model
+            , cat_curr_cats_1 model
+            ]
+
+
+cat_curr_title_1 : Model -> Html.Html Msg
+cat_curr_title_1 model =
+    let
+        style =
+            HA.style
+                [ ( "width", px p.dialog.cat_curr.width )
+                , ( "height", px p.dialog.cat_curr.title.height )
+                ]
+    in
+        Html.div [ style ]
+            [ Html.div [] [ Html.text <| model.input_tags ++ " is a:" ]
+            , Html.input
+                [ HA.id tagCatInputID
+                , HA.value model.input_tag_cat
+                , HE.onInput TagCatInputUpdated
+                , onKeyDown TagCatInputKeyDown
+                ]
+                []
+            ]
+
+
+cat_curr_cats_1 : Model -> Html.Html Msg
+cat_curr_cats_1 model =
+    let
+        style =
+            HA.style
+                [ ( "width", "100%" )
+                ]
+    in
+        Html.div [ style ] (List.map (cat_curr_cat_1 model) show_cats)
+
+
+cat_curr_cat_1 : Model -> ( String, String, String ) -> Html.Html Msg
+cat_curr_cat_1 model ( name, singular, icon ) =
+    let
+        sel_style =
+            HA.style
+                [ ( "height", px p.dialog.cat_curr.line.height )
+                , ( "font-weight", "bold" )
+                , ( "background", "grey" )
+                ]
+
+        unsel_style =
+            HA.style
+                [ ( "height", px p.dialog.cat_curr.line.height )
+                ]
+
+        style =
+            if List.member name (getMatchingCats model) then
+                sel_style
+            else
+                unsel_style
+
+        icon_style =
+            HA.style
+                [ ( "width", px p.dialog.cat_curr.line.icon_width )
+                ]
+    in
+        Html.div [ style ]
+            [ Html.img [ icon_style, HA.src icon ] []
+            , Html.text singular
+            ]
+
+
 
 {--
         understand/
@@ -4529,3 +3454,225 @@ cal unix =
 dumpUnx : Int -> String
 dumpUnx unix =
     cal unix ++ " " ++ hhmm unix
+
+
+{-|
+        outcome/
+Apply any user filter and return the appropriate tags
+-}
+filtered_tags : Model -> List Tag
+filtered_tags model =
+    let
+        normalize s =
+            String.toLower <| String.trim s
+
+        f =
+            normalize model.input_tags
+
+        matches tag =
+            if String.isEmpty f then
+                True
+            else
+                String.contains f (normalize tag)
+
+        tags =
+            List.filter matches model.tags
+
+        top_tags =
+            List.filter matches model.top_tags
+    in
+        selectableTags tags top_tags
+
+
+{-|
+        outcome/
+This is the EditingTag version of `filtered_tags`
+-}
+filtered_edit_tags : Model -> List EditingTag -> List EditingTag
+filtered_edit_tags model etags =
+    let
+        normalize s =
+            String.toLower <| String.trim s
+
+        f =
+            normalize model.input_tags
+
+        matches etag =
+            if String.isEmpty f then
+                True
+            else
+                String.contains f (normalize etag.orig)
+    in
+        List.filter matches etags
+
+
+
+{--
+        understand/
+Helper functions for dealing with the model data
+-}
+
+
+unix_to_local : Unix -> Date.Date
+unix_to_local unix =
+    Date.fromTime <| unix_to_tick unix
+
+
+unix_to_tick : Unix -> Time.Time
+unix_to_tick unix =
+    toFloat <| unix * 1000
+
+
+tick_to_unix : Time.Time -> Unix
+tick_to_unix t =
+    round <| t / 1000
+
+
+getPing : Model -> Int -> Maybe Ping
+getPing model unx =
+    List.foldr
+        (\ping acc ->
+            if ping.unix == unx then
+                Just ping
+            else
+                acc
+        )
+        Nothing
+        model.pings
+
+
+alwaysGetPing : Model -> Int -> Ping
+alwaysGetPing model unx =
+    case getPing model unx of
+        Nothing ->
+            { unix = unx, tags = [] }
+
+        Just p ->
+            p
+
+
+{-|
+        outcome/
+Check if the given tag is in the current selection and return the status
+-}
+tagInSelection : Model -> String -> SelStatus
+tagInSelection model tag =
+    let
+        sel_pings =
+            List.map (alwaysGetPing model) model.current
+
+        in_ping p =
+            List.foldr
+                (\t acc -> acc || strEq t tag)
+                False
+                p.tags
+
+        in_all_sels =
+            List.foldr (\p acc -> acc && in_ping p) True sel_pings
+
+        in_any_sel =
+            List.foldr (\p acc -> acc || in_ping p) False sel_pings
+    in
+        if List.length sel_pings == 0 then
+            NoSelection
+        else if in_all_sels then
+            InAll
+        else if in_any_sel then
+            InSome
+        else
+            InNone
+
+
+{-|
+        situation/
+We would like to have recently used tags ("top tags") to come up first
+followed by an alphabetical list. This makes it easy for the user to
+pick from the recent tags but also go ahead and search easily when the
+number of tags increases.
+
+        problem/
+In cases when the list is small the list looks like this:
+    code tagtime act code tagtime
+    |--recent--| |--alphabetical--|
+
+This kind of repetition looks strange and wrong.
+
+        way/
+When we have a certain number of items in the alphabetical list (say 10)
+and a certain number of items in the selection list (say 5) - it no
+longer looks strange:
+    code design tagtime office exercise act code cook design tagtime...
+    |---------  recent ---------------| |----------- alphabetical ---
+
+So what we will do is show the top and alphabetical lists as long as
+there are enough items and just the alphabetical list if there are not.
+-}
+selectableTags : List Tag -> List Tag -> List Tag
+selectableTags tags top_tags =
+    if List.length tags >= 10 && List.length top_tags >= 5 then
+        List.append top_tags tags
+    else
+        tags
+
+
+{-|
+        outcome/
+Treat strings that people expect to be "the same" as equal rather than
+doing a "computer-like" character comparison. This applies to tags and
+categories.
+-}
+strEq : String -> String -> Bool
+strEq t1 t2 =
+    let
+        tag1 =
+            normalize_str_1 t1
+
+        tag2 =
+            normalize_str_1 t2
+    in
+        tag1 == tag2
+
+
+normalize_str_1 : String -> String
+normalize_str_1 t =
+    String.toLower <| String.trim t
+
+
+{-|
+        outcome/
+Checks if the given string is a member of the list (using strEq)
+-}
+member : List String -> String -> Bool
+member l s =
+    List.foldr
+        (\str accum ->
+            if strEq str s then
+                True
+            else
+                accum
+        )
+        False
+        l
+
+
+
+{--
+        understand/
+CSS names are global - defined anywhere they affect each other.
+
+        problem/
+We would like to modularize our styles.
+
+        way/
+We will use a prefix that is unlikely to be used anywhere else.
+-}
+
+
+class : String -> Html.Attribute msg
+class name =
+    HA.class (classpfx_1 name)
+
+
+classpfx_1 : String -> String
+classpfx_1 name =
+    "tt-ping-" ++ name
