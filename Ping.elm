@@ -3470,7 +3470,9 @@ filtered_tags model =
             normalize model.input_tags
 
         matches tag =
-            if String.isEmpty f then
+            if specialTag tag then
+                False
+            else if String.isEmpty f then
                 True
             else
                 String.contains f (normalize tag)
