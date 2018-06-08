@@ -131,8 +131,11 @@ naturally and convert back and forth from category to this data
 structure.
 -}
 type alias EditingTag =
-    { orig : Tag
-    , name : String
+    { orig :
+        { name : Tag
+        , cat : String
+        }
+    , name : Tag
     , cat : String
     , del : Bool
     }
@@ -156,7 +159,10 @@ editingTagFrom model tag =
                 ""
                 model.cats
     in
-        { orig = tag
+        { orig =
+            { name = tag
+            , cat = cat
+            }
         , name = tag
         , cat = cat
         , del = False
@@ -633,6 +639,20 @@ onSplKeyActivated key model =
         ( { model | shift_on = True }, Cmd.none )
     else if key == "Control" then
         ( { model | ctrl_on = True }, Cmd.none )
+    else if key == "Enter" then
+        case model.dialog of
+            Just (EditTags _) ->
+                editTagsDone model
+
+            _ ->
+                ( model, Cmd.none )
+    else if key == "Escape" then
+        case model.dialog of
+            Just (EditTags _) ->
+                editTagsCancel model
+
+            _ ->
+                ( model, Cmd.none )
     else
         ( model, Cmd.none )
 
@@ -745,7 +765,8 @@ editTags : Model -> ( Model, Cmd Msg )
 editTags model =
     let
         edit_tags =
-            List.map (editingTagFrom model) model.tags
+            List.map (editingTagFrom model) <|
+                List.filter (\t -> not (specialTag t)) model.tags
     in
         ( { model | dialog = Just (EditTags edit_tags) }, Cmd.none )
 
@@ -791,93 +812,14 @@ editTagsDone model =
             edit_tags_done_1 edit_tags model
 
         _ ->
-            ( Debug.log "Unexpected Error: 743" model, Cmd.none )
+            ( model, Cmd.none )
 
 
 edit_tags_done_1 : List EditingTag -> Model -> ( Model, Cmd Msg )
 edit_tags_done_1 edit_tags model =
-    let
-        m =
-            model
-                |> update_cats_1 edit_tags
-                |> update_pings_1 edit_tags
-
-        all_tags =
-            m.tags
-
-        u =
-            { m | tags = all_tags }
-    in
-        ( { u | dialog = Nothing }, focusTagInput )
-
-
-{-|
-        outcome/
-Empty the existing category tags and repopulate them with all the edited
-tags.
--}
-update_cats_1 : List EditingTag -> Model -> Model
-update_cats_1 edit_tags model =
-    let
-        cats =
-            List.map update_cat model.cats
-
-        update_cat cat =
-            let
-                tags =
-                    get_tags_for cat
-            in
-                cat
-
-        get_tags_for cat =
-            List.foldr
-                (\etag accum ->
-                    if strEq etag.cat cat.name then
-                        etag.name :: accum
-                    else
-                        accum
-                )
-                []
-                edit_tags
-    in
-        { model | cats = cats }
-
-
-{-|
-        outcome/
-Rename any edited tags in the pings
--}
-update_pings_1 : List EditingTag -> Model -> Model
-update_pings_1 edit_tags model =
-    let
-        is_name_changed etag =
-            etag.orig /= etag.name
-
-        et =
-            List.filter is_name_changed edit_tags
-
-        updated_pings =
-            List.map update_ping model.pings
-
-        update_ping p =
-            let
-                tags =
-                    List.map rename_tag p.tags
-            in
-                p
-
-        rename_tag tag =
-            List.foldr
-                (\etag accum ->
-                    if strEq etag.orig tag then
-                        etag.name
-                    else
-                        accum
-                )
-                tag
-                et
-    in
-        { model | pings = updated_pings }
+    ( { model | dialog = Nothing }
+    , Cmd.batch [ tagsEdited edit_tags, focusTagInput ]
+    )
 
 
 {-|
@@ -1026,6 +968,9 @@ port rmTagsFromSel : List Tag -> Cmd msg
 
 
 port addTagToCat : ( Tag, String ) -> Cmd msg
+
+
+port tagsEdited : List EditingTag -> Cmd msg
 
 
 port setBricks : List Brick -> Cmd msg
@@ -1392,6 +1337,11 @@ type alias ViewParams =
                 , title_outline : String
                 , chk_font_sz : Int
                 , chk_padding : Int
+                , icon :
+                    { width : Int
+                    , top : Int
+                    , left : Int
+                    }
                 }
             }
         , edit_bricks :
@@ -1699,6 +1649,11 @@ p =
                     , title_outline = "none"
                     , chk_font_sz = 12
                     , chk_padding = 4
+                    , icon =
+                        { width = 32
+                        , top = 86
+                        , left = 112
+                        }
                     }
                 }
             , edit_bricks =
@@ -2306,7 +2261,7 @@ category_panel_1 model ( cat, icon ) ndx =
                 model
                 body_color
                 sel_color
-                (selectableTags cat.tags cat.top_tags)
+                (selectableTags cat.tags cat.top_tags 4)
                 ndx
             ]
 
@@ -3052,23 +3007,24 @@ edit_tags_dialog_tag_1 model tag =
                 , ( "font-weight", "bold" )
                 ]
 
-        cat_names =
-            "" :: List.map .name model.cats
+        all_cats =
+            ( "", "(not categorized)", "ping-cat-empty.png" ) :: show_cats
 
         colors =
             tag_card.uncat_color :: p.category_panel.header_colors
 
-        color_names =
-            List.map2 (\name color -> ( name, color )) cat_names colors
+        color_names_icons =
+            List.map2 (\( n, _, i ) color -> ( n, color, i )) all_cats colors
 
-        ( _, color ) =
-            Maybe.withDefault ( tag.cat, "red" ) <|
+        ( _, color, icon ) =
+            Maybe.withDefault ( tag.cat, "red", "ping-cat-unk.png" ) <|
                 List.head <|
-                    List.filter (\( n, _ ) -> strEq n tag.cat) color_names
+                    List.filter (\( n, _, _ ) -> strEq n tag.cat) color_names_icons
 
         body_style =
             HA.style
-                [ ( "background", color )
+                [ ( "position", "relative" )
+                , ( "background", color )
                 , ( "border-bottom-left-radius", px tag_card.border_radius )
                 , ( "border-bottom-right-radius", px tag_card.border_radius )
                 , ( "padding", tag_card.padding )
@@ -3093,19 +3049,24 @@ edit_tags_dialog_tag_1 model tag =
                 ]
 
         chks =
-            List.map chkFrom cat_names
+            List.map chkFrom all_cats
 
-        chk_default_name n =
-            if String.isEmpty n then
-                "(not categorized)"
-            else
-                n
+        icon_style =
+            HA.style
+                [ ( "position", "absolute" )
+                , ( "width", px tag_card.icon.width )
+                , ( "top", px tag_card.icon.top )
+                , ( "left", px tag_card.icon.left )
+                ]
 
-        chkFrom n =
+        cnt =
+            Html.img [ HA.src icon, icon_style ] [] :: chks
+
+        chkFrom ( n, txt, _ ) =
             if strEq n tag.cat then
                 Html.div [ HA.style chk_sel_style ]
                     [ Html.input [ HA.type_ "radio", HA.checked True ] []
-                    , Html.span [ chk_txt_style ] [ Html.text (chk_default_name n) ]
+                    , Html.span [ chk_txt_style ] [ Html.text txt ]
                     ]
             else
                 let
@@ -3122,7 +3083,7 @@ edit_tags_dialog_tag_1 model tag =
                             [ chk_txt_style
                             , HE.onClick msg
                             ]
-                            [ Html.text (chk_default_name n) ]
+                            [ Html.text txt ]
                         ]
     in
         Html.div [ style ]
@@ -3132,7 +3093,7 @@ edit_tags_dialog_tag_1 model tag =
                 , HE.onInput (EditTagName tag)
                 ]
                 []
-            , Html.div [ body_style ] chks
+            , Html.div [ body_style ] cnt
             ]
 
 
@@ -3483,7 +3444,7 @@ filtered_tags model =
         top_tags =
             List.filter matches model.top_tags
     in
-        selectableTags tags top_tags
+        selectableTags tags top_tags 10
 
 
 {-|
@@ -3503,7 +3464,7 @@ filtered_edit_tags model etags =
             if String.isEmpty f then
                 True
             else
-                String.contains f (normalize etag.orig)
+                String.contains f (normalize etag.orig.name)
     in
         List.filter matches etags
 
@@ -3600,18 +3561,18 @@ In cases when the list is small the list looks like this:
 This kind of repetition looks strange and wrong.
 
         way/
-When we have a certain number of items in the alphabetical list (say 10)
-and a certain number of items in the selection list (say 5) - it no
-longer looks strange:
+When we have a certain number of items in the alphabetical list (to
+display) and a certain number of items in the selection list (say 5) -
+it no longer looks strange:
     code design tagtime office exercise act code cook design tagtime...
     |---------  recent ---------------| |----------- alphabetical ---
 
 So what we will do is show the top and alphabetical lists as long as
 there are enough items and just the alphabetical list if there are not.
 -}
-selectableTags : List Tag -> List Tag -> List Tag
-selectableTags tags top_tags =
-    if List.length tags >= 10 && List.length top_tags >= 5 then
+selectableTags : List Tag -> List Tag -> Int -> List Tag
+selectableTags tags top_tags num_display =
+    if List.length tags >= num_display && List.length top_tags >= 5 then
         List.append top_tags tags
     else
         tags
