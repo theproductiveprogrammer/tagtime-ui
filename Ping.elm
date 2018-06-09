@@ -270,6 +270,7 @@ type Msg
     | ShowEditTags
     | EditTagVals EditingTag
     | EditTagName EditingTag String
+    | ToggleTagDel EditingTag
     | EditTagsDone
     | EditTagsCancel
     | AddBrick Brick
@@ -358,6 +359,9 @@ update msg model =
 
         EditTagName etag name ->
             editTagVals { etag | name = name } model
+
+        ToggleTagDel etag ->
+            editTagVals { etag | del = not etag.del } model
 
         EditTagsDone ->
             editTagsDone model
@@ -1342,6 +1346,11 @@ type alias ViewParams =
                     , top : Int
                     , left : Int
                     }
+                , del :
+                    { width : Int
+                    , top : Int
+                    , right : Int
+                    }
                 }
             }
         , edit_bricks :
@@ -1653,6 +1662,11 @@ p =
                         { width = 32
                         , top = 86
                         , left = 112
+                        }
+                    , del =
+                        { width = 16
+                        , top = -20
+                        , right = 10
                         }
                     }
                 }
@@ -2994,6 +3008,12 @@ edit_tags_dialog_tag_1 model tag =
                 , ( "width", px width )
                 ]
 
+        txt_dec =
+            if tag.del then
+                "line-through"
+            else
+                "none"
+
         inp_style =
             HA.style
                 [ ( "display", "block" )
@@ -3005,6 +3025,7 @@ edit_tags_dialog_tag_1 model tag =
                 , ( "border-top-left-radius", px tag_card.border_radius )
                 , ( "border-top-right-radius", px tag_card.border_radius )
                 , ( "font-weight", "bold" )
+                , ( "text-decoration", txt_dec )
                 ]
 
         all_cats =
@@ -3059,8 +3080,23 @@ edit_tags_dialog_tag_1 model tag =
                 , ( "left", px tag_card.icon.left )
                 ]
 
+        del_style =
+            HA.style
+                [ ( "position", "absolute" )
+                , ( "width", px tag_card.del.width )
+                , ( "top", px tag_card.del.top )
+                , ( "right", px tag_card.del.right )
+                ]
+
         cnt =
-            Html.img [ HA.src icon, icon_style ] [] :: chks
+            Html.img
+                [ HA.src "ping-tag-del.png"
+                , del_style
+                , HE.onClick (ToggleTagDel tag)
+                ]
+                []
+                :: Html.img [ HA.src icon, icon_style ] []
+                :: chks
 
         chkFrom ( n, txt, _ ) =
             if strEq n tag.cat then
