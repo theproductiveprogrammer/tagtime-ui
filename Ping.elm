@@ -150,9 +150,9 @@ editingTagFrom model tag =
     let
         cat =
             List.foldr
-                (\cat acc ->
-                    if member cat.tags tag then
-                        cat.name
+                (\c acc ->
+                    if member c.tags tag then
+                        c.name
                     else
                         acc
                 )
@@ -2934,7 +2934,7 @@ edit_tags_dialog_1 model edit_tags_data top_pos =
     in
         Html.div [ style ]
             [ edit_tags_dialog_title_1
-            , edit_tags_dialog_tags_1 model tags
+            , edit_tags_dialog_tags_1 tags
             , edit_tags_dialog_footer_1
             ]
 
@@ -2961,8 +2961,8 @@ edit_tags_dialog_title_1 =
             [ Html.text "Edit Tags" ]
 
 
-edit_tags_dialog_tags_1 : Model -> List EditingTag -> Html.Html Msg
-edit_tags_dialog_tags_1 model tags =
+edit_tags_dialog_tags_1 : List EditingTag -> Html.Html Msg
+edit_tags_dialog_tags_1 tags =
     let
         top =
             p.dialog.edit_tags.title_height
@@ -2986,11 +2986,11 @@ edit_tags_dialog_tags_1 model tags =
                 ]
     in
         Html.div [ style ]
-            (List.map (edit_tags_dialog_tag_1 model) tags)
+            (List.map edit_tags_dialog_tag_1 tags)
 
 
-edit_tags_dialog_tag_1 : Model -> EditingTag -> Html.Html Msg
-edit_tags_dialog_tag_1 model tag =
+edit_tags_dialog_tag_1 : EditingTag -> Html.Html Msg
+edit_tags_dialog_tag_1 tag =
     let
         width =
             p.dialog.edit_tags.tag_card.width
@@ -3351,108 +3351,6 @@ hhmm unix =
             ++ pad2 (Date.minute date)
 
 
-dow : Int -> String
-dow unix =
-    let
-        date =
-            unix_to_local unix
-    in
-        case Date.dayOfWeek date of
-            Date.Mon ->
-                "Mon"
-
-            Date.Tue ->
-                "Tue"
-
-            Date.Wed ->
-                "Wed"
-
-            Date.Thu ->
-                "Thu"
-
-            Date.Fri ->
-                "Fri"
-
-            Date.Sat ->
-                "Sat"
-
-            Date.Sun ->
-                "Sun"
-
-
-month : Int -> String
-month unix =
-    let
-        date =
-            unix_to_local unix
-    in
-        case Date.month date of
-            Date.Jan ->
-                "Jan"
-
-            Date.Feb ->
-                "Feb"
-
-            Date.Mar ->
-                "Mar"
-
-            Date.Apr ->
-                "Apr"
-
-            Date.May ->
-                "May"
-
-            Date.Jun ->
-                "Jun"
-
-            Date.Jul ->
-                "Jul"
-
-            Date.Aug ->
-                "Aug"
-
-            Date.Sep ->
-                "Sep"
-
-            Date.Oct ->
-                "Oct"
-
-            Date.Nov ->
-                "Nov"
-
-            Date.Dec ->
-                "Dec"
-
-
-day : Int -> String
-day unix =
-    let
-        date =
-            unix_to_local unix
-    in
-        pad2 (Date.day date)
-
-
-cal : Int -> String
-cal unix =
-    let
-        wd =
-            dow unix
-
-        mn =
-            month unix
-
-        dy =
-            day unix
-    in
-        wd ++ ", " ++ dy ++ "/" ++ mn
-
-
-dumpUnx : Int -> String
-dumpUnx unix =
-    cal unix ++ " " ++ hhmm unix
-
-
 {-|
         outcome/
 Apply any user filter and return the appropriate tags
@@ -3520,11 +3418,6 @@ unix_to_local unix =
 unix_to_tick : Unix -> Time.Time
 unix_to_tick unix =
     toFloat <| unix * 1000
-
-
-tick_to_unix : Time.Time -> Unix
-tick_to_unix t =
-    round <| t / 1000
 
 
 getPing : Model -> Int -> Maybe Ping
