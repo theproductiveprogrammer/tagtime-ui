@@ -264,6 +264,7 @@ type Msg
     | SelectFirstPing
     | AddCurrentTag String
     | RemoveCurrentTag String
+    | SetTagCat Tag String
     | HideWindow
     | OnScrollTagsUp (Result Dom.Error (List ()))
     | OnElementFocused (Result Dom.Error ())
@@ -341,6 +342,11 @@ update msg model =
 
         RemoveCurrentTag tag ->
             ( model, rmTagsFromSel [ tag ] )
+
+        SetTagCat tag cat ->
+            ( { model | input_tags = "", input_tag_cat = "", dialog = Nothing }
+            , tagCatSet tag cat
+            )
 
         HideWindow ->
             ( model, Cmd.batch [ show "off", setSel [] ] )
@@ -594,9 +600,6 @@ getMatchingCat model =
                     Nothing
 
 
-{-|
-        outcome/
--}
 set_tag_from_input_cat_1 : Model -> Model -> ( Model, Cmd Msg )
 set_tag_from_input_cat_1 model newmodel =
     case getMatchingCat model of
@@ -606,13 +609,21 @@ set_tag_from_input_cat_1 model newmodel =
             )
 
         Just c ->
-            ( newmodel
-            , Cmd.batch
-                [ addTagToCat ( model.input_tags, c )
-                , focusTagInput
-                , addTagsToSel [ model.input_tags ]
-                ]
-            )
+            ( newmodel, tagCatSet model.input_tags c )
+
+
+{-|
+        outcome/
+When the user selects a category for the tag we add it to the current
+selection as well as the category, and bring focus back to the input.
+-}
+tagCatSet : Tag -> String -> Cmd Msg
+tagCatSet tag cat =
+    Cmd.batch
+        [ addTagToCat ( tag, cat )
+        , focusTagInput
+        , addTagsToSel [ tag ]
+        ]
 
 
 {-|
@@ -1698,7 +1709,7 @@ p =
             (window.width - cat_curr_width) // 2
 
         cat_curr_width =
-            128
+            150
 
         cat_curr_height =
             cat_curr_title_height
@@ -3253,6 +3264,7 @@ cat_curr_title_1 model =
             HA.style
                 [ ( "width", px p.dialog.cat_curr.width )
                 , ( "height", px p.dialog.cat_curr.title.height )
+                , ( "overflow", "scroll" )
                 ]
     in
         Html.div [ style ]
@@ -3286,11 +3298,13 @@ cat_curr_cat_1 model ( name, singular, icon ) =
                 [ ( "height", px p.dialog.cat_curr.line.height )
                 , ( "font-weight", "bold" )
                 , ( "background", "grey" )
+                , ( "cursor", "pointer" )
                 ]
 
         unsel_style =
             HA.style
                 [ ( "height", px p.dialog.cat_curr.line.height )
+                , ( "cursor", "pointer" )
                 ]
 
         style =
@@ -3304,7 +3318,7 @@ cat_curr_cat_1 model ( name, singular, icon ) =
                 [ ( "width", px p.dialog.cat_curr.line.icon_width )
                 ]
     in
-        Html.div [ style ]
+        Html.div [ style, HE.onClick (SetTagCat model.input_tags name) ]
             [ Html.img [ icon_style, HA.src icon ] []
             , Html.text singular
             ]
