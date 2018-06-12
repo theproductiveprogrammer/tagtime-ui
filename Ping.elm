@@ -1373,6 +1373,7 @@ type alias ViewParams =
             , left : Int
             , width : Int
             , height : Int
+            , inp_width : Int
             , background : String
             , padding : Int
             , border_radius : Int
@@ -1381,6 +1382,8 @@ type alias ViewParams =
                 { height : Int }
             , line :
                 { height : Int
+                , margin_top : Int
+                , padding : Int
                 , icon_width : Int
                 }
             }
@@ -1690,6 +1693,7 @@ p =
                 , left = cat_curr_left
                 , width = cat_curr_width
                 , height = cat_curr_height
+                , inp_width = cat_curr_inp_width
                 , background = "linear-gradient(white, #cacaca)"
                 , padding = 10
                 , border_radius = 6
@@ -1697,6 +1701,8 @@ p =
                 , title = { height = cat_curr_title_height }
                 , line =
                     { height = cat_curr_line_height
+                    , margin_top = cat_curr_line_margin_top
+                    , padding = cat_curr_line_padding
                     , icon_width = 24
                     }
                 }
@@ -1711,10 +1717,23 @@ p =
         cat_curr_width =
             150
 
+        cat_curr_inp_width =
+            128
+
+        cat_curr_line_margin_top =
+            8
+
+        cat_curr_line_padding =
+            2
+
         cat_curr_height =
             cat_curr_title_height
-                + cat_curr_line_height
+                + (cat_curr_line_height
+                    + cat_curr_line_margin_top
+                    + cat_curr_line_padding
+                  )
                 * List.length show_cats
+                + 8
 
         cat_curr_title_height =
             48
@@ -1822,7 +1841,7 @@ subtitle_1 =
                 ]
     in
         Html.div [ style ]
-            [ Html.text "Tag! At This Instant..." ]
+            [ Html.text "Tag! At This Instant I am..." ]
 
 
 {-|
@@ -2150,10 +2169,10 @@ energy_level_tags_1 model =
                 ]
     in
         Html.div [ style ]
-            [ energy_icon_1 model eSleep "ping-energy-sleep.png"
-            , energy_icon_1 model eHigh "ping-energy-high.png"
+            [ energy_icon_1 model eHigh "ping-energy-high.png"
             , energy_icon_1 model eMed "ping-energy-med.png"
             , energy_icon_1 model eLow "ping-energy-low.png"
+            , energy_icon_1 model eSleep "ping-energy-sleep.png"
             ]
 
 
@@ -3264,7 +3283,14 @@ cat_curr_title_1 model =
             HA.style
                 [ ( "width", px p.dialog.cat_curr.width )
                 , ( "height", px p.dialog.cat_curr.title.height )
-                , ( "overflow", "scroll" )
+                , ( "overflow", "hidden" )
+                ]
+
+        inp_style =
+            HA.style
+                [ ( "display", "block" )
+                , ( "width", px p.dialog.cat_curr.inp_width )
+                , ( "margin", "2px auto" )
                 ]
     in
         Html.div [ style ]
@@ -3274,6 +3300,7 @@ cat_curr_title_1 model =
                 , HA.value model.input_tag_cat
                 , HE.onInput TagCatInputUpdated
                 , onKeyDown TagCatInputKeyDown
+                , inp_style
                 ]
                 []
             ]
@@ -3296,14 +3323,21 @@ cat_curr_cat_1 model ( name, singular, icon ) =
         sel_style =
             HA.style
                 [ ( "height", px p.dialog.cat_curr.line.height )
+                , ( "line-height", px p.dialog.cat_curr.line.height )
+                , ( "margin-top", px p.dialog.cat_curr.line.margin_top )
+                , ( "padding", px p.dialog.cat_curr.line.padding )
+                , ( "padding", "2px" )
+                , ( "cursor", "pointer" )
                 , ( "font-weight", "bold" )
                 , ( "background", "grey" )
-                , ( "cursor", "pointer" )
                 ]
 
         unsel_style =
             HA.style
                 [ ( "height", px p.dialog.cat_curr.line.height )
+                , ( "line-height", px p.dialog.cat_curr.line.height )
+                , ( "margin-top", px p.dialog.cat_curr.line.margin_top )
+                , ( "padding", px p.dialog.cat_curr.line.padding )
                 , ( "cursor", "pointer" )
                 ]
 
@@ -3316,9 +3350,14 @@ cat_curr_cat_1 model ( name, singular, icon ) =
         icon_style =
             HA.style
                 [ ( "width", px p.dialog.cat_curr.line.icon_width )
+                , ( "padding-right", "4px" )
                 ]
     in
-        Html.div [ style, HE.onClick (SetTagCat model.input_tags name) ]
+        Html.div
+            [ class "tag-cat"
+            , style
+            , HE.onClick (SetTagCat model.input_tags name)
+            ]
             [ Html.img [ icon_style, HA.src icon ] []
             , Html.text singular
             ]
