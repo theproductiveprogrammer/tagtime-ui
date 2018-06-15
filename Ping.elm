@@ -2558,7 +2558,7 @@ brick_list_1 model =
                 ]
     in
         Html.div [ style ]
-            [ Html.div [ hdr_style, HE.onClick ShowEditBricks ] [ Html.text "To Do" ]
+            [ Html.div [ hdr_style, HE.onClick ShowEditBricks ] [ Html.text "Most Important Tasks" ]
             , brick_list_items_1 model
             ]
 
