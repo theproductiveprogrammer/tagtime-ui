@@ -2004,7 +2004,7 @@ ping_tags_1 ping =
             List.foldr
                 (\( e, clr ) acc ->
                     if List.member e ping.tags then
-                        "3px solid " ++ clr
+                        "8px solid " ++ clr
                     else
                         acc
                 )
