@@ -1996,7 +1996,7 @@ ping_tags_1 ping =
         e_color_map =
             [ ( eSleep, "rgba(85, 86, 143, 0.75)" )
             , ( eHigh, "rgba(0, 191, 118, 0.75)" )
-            , ( eMed, "rgba(128, 128, 128, 0.75)" )
+            , ( eMed, "rgba(113, 89, 89, 0.75)" )
             , ( eLow, "rgba(235, 17, 36, 0.52)" )
             ]
 
