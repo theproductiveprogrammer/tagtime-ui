@@ -2478,7 +2478,7 @@ tags_1 model =
                 ]
 
         tags =
-            filtered_tags model
+            List.take 100 <| filtered_tags model
     in
         Html.div [ style ] (List.map (show_tag_1 model) tags)
 
