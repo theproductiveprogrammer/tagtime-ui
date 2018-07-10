@@ -52,12 +52,12 @@ type alias Model =
 {-|
         understand/
 A 'Ping' represents a sampling of what the user was doing at a given
-unix time (at a given 'sampling' frequency in seconds).
+unix time (at a given sampling 'gap' in seconds).
 -}
 type alias Ping =
     { unix : Unix
     , tags : List Tag
-    , sampling : Int
+    , gap : Int
     }
 
 
@@ -3491,7 +3491,7 @@ alwaysGetPing : Model -> Int -> Ping
 alwaysGetPing model unx =
     case getPing model unx of
         Nothing ->
-            { unix = unx, tags = [], sampling = 0 }
+            { unix = unx, tags = [], gap = 0 }
 
         Just p ->
             p
