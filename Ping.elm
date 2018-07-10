@@ -257,7 +257,6 @@ type Msg
     | SetLatestTags (List Tag)
     | SetLatestTopTags (List Tag)
     | SetLatestSelection (List Unix)
-    | PrepareTo String
     | LoadingDone Bool
     | OnSplKeyActivated String
     | OnSplKeysReleased Bool
@@ -307,9 +306,6 @@ update msg model =
 
         SetLatestSelection sels ->
             ( { model | current = sels }, Cmd.none )
-
-        PrepareTo what ->
-            onPrepare what model
 
         LoadingDone _ ->
             finishedLoading model
@@ -393,41 +389,6 @@ update msg model =
 
         HideTODO ->
             ( { model | dialog = Nothing }, Cmd.none )
-
-
-onPrepare : String -> Model -> ( Model, Cmd Msg )
-onPrepare what model =
-    if what == "show" then
-        prepareToShow model
-    else
-        ( model, Cmd.none )
-
-
-prepareToShow : Model -> ( Model, Cmd Msg )
-prepareToShow model =
-    let
-        cmds =
-            if List.isEmpty model.current then
-                case List.head <| List.reverse model.pings of
-                    Nothing ->
-                        Cmd.batch
-                            [ focusTagInput
-                            , scrollTagListsToTop_1
-                            ]
-
-                    Just ping ->
-                        Cmd.batch
-                            [ focusTagInput
-                            , scrollTagListsToTop_1
-                            , setSel [ ping.unix ]
-                            ]
-            else
-                Cmd.batch
-                    [ focusTagInput
-                    , scrollTagListsToTop_1
-                    ]
-    in
-        ( model, cmds )
 
 
 finishedLoading : Model -> ( Model, Cmd Msg )
@@ -910,7 +871,6 @@ subscriptions _ =
         , latestTags SetLatestTags
         , latestTopTags SetLatestTopTags
         , latestSel SetLatestSelection
-        , prepareTo PrepareTo
         , loadingDone LoadingDone
         , splKeyActive OnSplKeyActivated
         , splKeysReleased OnSplKeysReleased
@@ -936,13 +896,6 @@ ourselves). Therefore we create a port through which we send a message
 asking the main process to show/hide our browser window.
 -}
 port show : String -> Cmd msg
-
-
-{-|
-        understand/
-Hooks that let us prepare.
--}
-port prepareTo : (String -> msg) -> Sub msg
 
 
 {-|
