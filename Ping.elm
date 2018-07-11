@@ -35,7 +35,8 @@ our system (except for CSS animations) can be derived from this model so
 it will have a hodge-podge of everything we need to keep track of.
 -}
 type alias Model =
-    { pings : List Ping
+    { now : Unix
+    , pingset : List DailyPings
     , bricks : List Brick
     , cats : List Category
     , tags : List Tag
@@ -46,6 +47,16 @@ type alias Model =
     , input_tags : String
     , input_tag_cat : String
     , dialog : Maybe Dialog
+    }
+
+
+{-|
+        understand/
+A gathering of pings that fall on the same day
+-}
+type alias DailyPings =
+    { unix : Unix
+    , pings : List Ping
     }
 
 
@@ -223,7 +234,8 @@ Initialize our model to start up.
 -}
 init : ( Model, Cmd Msg )
 init =
-    ( { pings = []
+    ( { now = 0
+      , pingset = []
       , bricks = []
       , cats = []
       , tags = []
@@ -251,7 +263,8 @@ function because coupling should be reduced.
 
 
 type Msg
-    = SetLatestPings (List Ping)
+    = SetNow Unix
+    | SetLatestDailyPings (List DailyPings)
     | SetLatestCats (List Category)
     | SetLatestBricks (List Brick)
     | SetLatestTags (List Tag)
@@ -289,8 +302,11 @@ type Msg
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
-        SetLatestPings pings ->
-            ( { model | pings = pings }, Cmd.none )
+        SetNow unix ->
+            ( { model | now = unix }, Cmd.none )
+
+        SetLatestDailyPings pingset ->
+            ( { model | pingset = pingset }, Cmd.none )
 
         SetLatestCats cats ->
             ( { model | cats = cats }, Cmd.none )
@@ -697,7 +713,7 @@ shift_select_1 model unx =
                     acc
             )
             []
-            model.pings
+            (xtractPings model)
 
 
 ctrl_select_1 : Model -> Unix -> List Int
@@ -723,7 +739,7 @@ selectFirstPing : Model -> ( Model, Cmd Msg )
 selectFirstPing model =
     let
         first_ping =
-            List.head <| List.reverse model.pings
+            List.head <| List.reverse <| xtractPings model
     in
         case first_ping of
             Nothing ->
@@ -865,7 +881,8 @@ push events - timers, websockets, and javascript communication.
 subscriptions : Model -> Sub Msg
 subscriptions _ =
     Sub.batch
-        [ latestPings SetLatestPings
+        [ latestTime SetNow
+        , latestDailyPings SetLatestDailyPings
         , latestCats SetLatestCats
         , latestBricks SetLatestBricks
         , latestTags SetLatestTags
@@ -909,7 +926,10 @@ port loadingDone : (Bool -> msg) -> Sub msg
         understand/
 We send our updates to javascript and receive updated data.
 -}
-port latestPings : (List Ping -> msg) -> Sub msg
+port latestTime : (Unix -> msg) -> Sub msg
+
+
+port latestDailyPings : (List DailyPings -> msg) -> Sub msg
 
 
 port latestCats : (List Category -> msg) -> Sub msg
@@ -1887,17 +1907,52 @@ ping_list_1 model =
                 , ( "font-size", px p.ping_list.font_size )
                 , ( "cursor", "pointer" )
                 ]
-
-        pings =
-            List.reverse model.pings
     in
         Html.div [ style, HA.id pingListID ]
             [ Html.table
                 [ HA.attribute "cellspacing" "0"
                 , HA.attribute "cellpadding" "0"
                 ]
-                (List.map (show_ping_1 model) pings)
+                (show_dailypings_1 model)
             ]
+
+
+show_dailypings_1 : Model -> List (Html.Html Msg)
+show_dailypings_1 model =
+    let
+        tr_style =
+            HA.style
+                [ ( "height", "24px" ) ]
+
+        td_style =
+            HA.style
+                [ ( "text-align", "center" )
+                ]
+
+        style =
+            HA.style
+                [ ( "background", "#0b81da" )
+                , ( "padding", "2px 8px" )
+                , ( "border-radius", "4px" )
+                , ( "font-size", "12px" )
+                , ( "font-style", "italic" )
+                , ( "color", "aliceblue" )
+                , ( "box-shadow", "1px 1px 1px #909090" )
+                ]
+    in
+        List.foldr
+            (\dailypings acc ->
+                List.append acc <|
+                    Html.tr [ tr_style ]
+                        [ Html.td [ HA.colspan 2, td_style ]
+                            [ Html.span [ style ]
+                                [ Html.text (ddmmyy model.now dailypings.unix) ]
+                            ]
+                        ]
+                        :: (List.map (show_ping_1 model) <| List.reverse dailypings.pings)
+            )
+            []
+            model.pingset
 
 
 {-|
@@ -2596,7 +2651,7 @@ project_pie_1 : Model -> Html.Html Msg
 project_pie_1 model =
     let
         pings =
-            List.take 16 model.pings
+            List.take 16 <| xtractPings model
 
         cat_project =
             List.head <|
@@ -3347,6 +3402,46 @@ pad2 v =
         toString v
 
 
+ddmmyy : Unix -> Unix -> String
+ddmmyy now unix =
+    let
+        date =
+            unix_to_local unix
+
+        n =
+            unix_to_local now
+
+        y =
+            unix_to_local (now - 60 * 60 * 24)
+
+        is_today_1 =
+            Date.day date
+                == Date.day n
+                && Date.month date
+                == Date.month n
+                && Date.year date
+                == Date.year n
+
+        is_yesterday_1 =
+            Date.day date
+                == Date.day y
+                && Date.month date
+                == Date.month y
+                && Date.year date
+                == Date.year y
+    in
+        if is_today_1 then
+            "Today"
+        else if is_yesterday_1 then
+            "Yesterday"
+        else
+            toString (Date.day date)
+                ++ "/"
+                ++ toString (Date.month date)
+                ++ " "
+                ++ toString (Date.year date)
+
+
 hhmm : Int -> String
 hhmm unix =
     let
@@ -3437,7 +3532,17 @@ getPing model unx =
                 acc
         )
         Nothing
-        model.pings
+        (xtractPings model)
+
+
+xtractPings : Model -> List Ping
+xtractPings model =
+    List.foldl
+        (\pl acc ->
+            List.append acc pl.pings
+        )
+        []
+        model.pingset
 
 
 alwaysGetPing : Model -> Int -> Ping
