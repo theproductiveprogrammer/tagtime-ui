@@ -1,6 +1,6 @@
 # TagTime
 
-*_Track your time efforlessly and accuratly!_*
+*_Track your time effortlessly and accurately!_*
 
 TagTime is an application that does stochastic time tracking. This means
 it will ping you occasionally and you should tag _exactly what you are
