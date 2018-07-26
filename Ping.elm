@@ -630,7 +630,7 @@ onSplKeyActivated : String -> Model -> ( Model, Cmd Msg )
 onSplKeyActivated key model =
     if key == "Shift" then
         ( { model | shift_on = True }, Cmd.none )
-    else if key == "Control" then
+    else if key == "Control" || key == "Meta" then
         ( { model | ctrl_on = True }, Cmd.none )
     else if key == "Enter" then
         case model.dialog of
