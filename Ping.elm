@@ -43,6 +43,7 @@ type alias Model =
     , top_tags : List Tag
     , current : List Unix
     , shift_on : Bool
+    , shift_start : Maybe Unix
     , ctrl_on : Bool
     , input_tags : String
     , input_tag_cat : String
@@ -242,6 +243,7 @@ init =
       , top_tags = []
       , current = []
       , shift_on = False
+      , shift_start = Nothing
       , ctrl_on = False
       , input_tags = ""
       , input_tag_cat = ""
@@ -321,7 +323,7 @@ update msg model =
             ( { model | top_tags = tags }, Cmd.none )
 
         SetLatestSelection sels ->
-            ( { model | current = sels }, Cmd.none )
+            ( setLatestSels sels model, Cmd.none )
 
         LoadingDone _ ->
             finishedLoading model
@@ -405,6 +407,32 @@ update msg model =
 
         HideTODO ->
             ( { model | dialog = Nothing }, Cmd.none )
+
+
+{-|
+        situation/
+In order to select a group of pings using 'shift' we need to know the
+starting point (from which the remaining pings are selected). This is
+saved in the `shift_start` member and updated whenever clicking. However
+the pings themselves are managed by Javascript (and not here).
+
+        problem/
+Therefore when setting the pings there could be a disconnect between the
+starting ping and the selected pings.
+
+        way/
+The main problem (for now) is that this disconnect manifests when we
+clear the pings as that happens when Javascript prepares to hide the
+window (but this is not know to Elm). So we will, for now, just check
+for this case - if there are no selections, we clear the `shift_start`
+as well
+-}
+setLatestSels : List Unix -> Model -> Model
+setLatestSels sels model =
+    if List.length sels == 0 then
+        { model | current = sels, shift_start = Nothing }
+    else
+        { model | current = sels }
 
 
 finishedLoading : Model -> ( Model, Cmd Msg )
@@ -664,30 +692,39 @@ recent tags list.
 
         steps/
 If ctrl is pressed add this selection.
-If shift is pressed create a new set of selections from the first
-selection to this one. If there is no first selection, make this one the
-first selection.
+If shift is pressed create a new set of selections from the starting
+selection to this one. If there is no starting selection, make this one the
+start of the selection.
 Otherwise make this the selection.
 -}
 clickSelect : Unix -> Model -> ( Model, Cmd Msg )
 clickSelect unx model =
     let
-        current =
+        ( current, m ) =
             if model.shift_on then
                 shift_select_1 model unx
             else if model.ctrl_on then
                 ctrl_select_1 model unx
             else
-                [ unx ]
+                ( [ unx ], { model | shift_start = Just unx } )
     in
-        ( model, setSel current )
+        ( m, setSel current )
 
 
-shift_select_1 : Model -> Unix -> List Int
+shift_select_1 : Model -> Unix -> ( List Int, Model )
 shift_select_1 model unx =
     let
-        first_selection =
-            case List.head model.current of
+        shift_start =
+            if List.length model.current == 1 then
+                List.head model.current
+            else
+                model.shift_start
+
+        m =
+            { model | shift_start = shift_start }
+
+        sel_start =
+            case shift_start of
                 Nothing ->
                     unx
 
@@ -695,37 +732,44 @@ shift_select_1 model unx =
                     h
 
         dir_to_walk =
-            if first_selection < unx then
+            if sel_start < unx then
                 List.foldl
             else
                 List.foldr
-    in
-        dir_to_walk
-            (\p acc ->
-                if first_selection < unx then
-                    if p.unix <= unx && p.unix >= first_selection then
+
+        sels =
+            dir_to_walk
+                (\p acc ->
+                    if sel_start < unx then
+                        if p.unix <= unx && p.unix >= sel_start then
+                            p.unix :: acc
+                        else
+                            acc
+                    else if p.unix <= sel_start && p.unix >= unx then
                         p.unix :: acc
                     else
                         acc
-                else if p.unix <= first_selection && p.unix >= unx then
-                    p.unix :: acc
-                else
-                    acc
-            )
-            []
-            (xtractPings model)
+                )
+                []
+                (xtractPings m)
+    in
+        ( sels, m )
 
 
-ctrl_select_1 : Model -> Unix -> List Int
+ctrl_select_1 : Model -> Unix -> ( List Int, Model )
 ctrl_select_1 model unx =
     let
         in_sel =
             List.member unx model.current
     in
         if in_sel then
-            List.filter (\u -> u /= unx) model.current
+            ( List.filter (\u -> u /= unx) model.current
+            , { model | shift_start = Nothing }
+            )
         else
-            unx :: model.current
+            ( unx :: model.current
+            , { model | shift_start = Just unx }
+            )
 
 
 {-|
