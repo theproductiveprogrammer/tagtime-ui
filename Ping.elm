@@ -275,6 +275,7 @@ type Msg
     | LoadingDone Bool
     | OnSplKeyActivated String
     | OnSplKeysReleased Bool
+    | OnPrepareToHide Bool
     | ClickSelect Unix
     | SelectFirstPing
     | AddCurrentTag String
@@ -323,7 +324,7 @@ update msg model =
             ( { model | top_tags = tags }, Cmd.none )
 
         SetLatestSelection sels ->
-            ( setLatestSels sels model, Cmd.none )
+            ( { model | current = sels }, Cmd.none )
 
         LoadingDone _ ->
             finishedLoading model
@@ -345,6 +346,9 @@ update msg model =
 
         OnSplKeysReleased _ ->
             onSplKeysReleased model
+
+        OnPrepareToHide _ ->
+            onPrepareToHide model
 
         ClickSelect unx ->
             clickSelect unx model
@@ -407,32 +411,6 @@ update msg model =
 
         HideTODO ->
             ( { model | dialog = Nothing }, Cmd.none )
-
-
-{-|
-        situation/
-In order to select a group of pings using 'shift' we need to know the
-starting point (from which the remaining pings are selected). This is
-saved in the `shift_start` member and updated whenever clicking. However
-the pings themselves are managed by Javascript (and not here).
-
-        problem/
-Therefore when setting the pings there could be a disconnect between the
-starting ping and the selected pings.
-
-        way/
-The main problem (for now) is that this disconnect manifests when we
-clear the pings as that happens when Javascript prepares to hide the
-window (but this is not know to Elm). So we will, for now, just check
-for this case - if there are no selections, we clear the `shift_start`
-as well
--}
-setLatestSels : List Unix -> Model -> Model
-setLatestSels sels model =
-    if List.length sels == 0 then
-        { model | current = sels, shift_start = Nothing }
-    else
-        { model | current = sels }
 
 
 finishedLoading : Model -> ( Model, Cmd Msg )
@@ -681,6 +659,17 @@ onSplKeyActivated key model =
 onSplKeysReleased : Model -> ( Model, Cmd Msg )
 onSplKeysReleased model =
     ( { model | shift_on = False, ctrl_on = False }, Cmd.none )
+
+
+{-|
+        outcome/
+The window is about to be hidden. When it next shows it should look like
+it's a newly appearing window. For this, we reset the selections to null
+and scroll everything back to the top.
+-}
+onPrepareToHide : Model -> ( Model, Cmd Msg )
+onPrepareToHide model =
+    ( { model | current = [], shift_start = Nothing }, scrollListsToTop_1 )
 
 
 {-|
@@ -935,6 +924,7 @@ subscriptions _ =
         , loadingDone LoadingDone
         , splKeyActive OnSplKeyActivated
         , splKeysReleased OnSplKeysReleased
+        , prepareToHide OnPrepareToHide
         ]
 
 
@@ -1022,6 +1012,14 @@ port splKeysReleased : (Bool -> msg) -> Sub msg
 
 {-|
         understand/
+Just before the window is going to be hidden we get a signal so we can
+prepare the window for the next display.
+-}
+port prepareToHide : (Bool -> msg) -> Sub msg
+
+
+{-|
+        understand/
 Javascript errors are sent to us so we can show them etc
 -}
 port errormsg : (String -> msg) -> Sub msg
@@ -1085,8 +1083,8 @@ can see the most appropriate ones first.
 NB: The ping list and category tags must each be given a unique id
 (categories from 0 to 3) which are then used here.
 -}
-scrollTagListsToTop_1 : Cmd Msg
-scrollTagListsToTop_1 =
+scrollListsToTop_1 : Cmd Msg
+scrollListsToTop_1 =
     let
         cat_ids =
             List.map catTagsId [ 0, 1, 2, 3 ]
