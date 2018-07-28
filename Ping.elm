@@ -64,12 +64,13 @@ type alias DailyPings =
 {-|
         understand/
 A 'Ping' represents a sampling of what the user was doing at a given
-unix time (at a given sampling 'gap' in seconds).
+unix time (at a given sampling 'gap' in seconds and a comment/context)
 -}
 type alias Ping =
     { unix : Unix
     , tags : List Tag
     , gap : Int
+    , ctx : List String
     }
 
 
@@ -3591,7 +3592,7 @@ alwaysGetPing : Model -> Int -> Ping
 alwaysGetPing model unx =
     case getPing model unx of
         Nothing ->
-            { unix = unx, tags = [], gap = 0 }
+            { unix = unx, tags = [], ctx = [], gap = 0 }
 
         Just p ->
             p
