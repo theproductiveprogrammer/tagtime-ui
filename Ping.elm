@@ -128,7 +128,7 @@ type Dialog
     | Loading
     | EditTags (List EditingTag)
     | EditBricks String
-    | CategorizeCurrentTag
+    | CategorizeTag Tag
 
 
 {-|
@@ -298,7 +298,7 @@ type Msg
     | TagInputUpdated String
     | TagInputKeyDown Int
     | TagCatInputUpdated String
-    | TagCatInputKeyDown Int
+    | TagCatInputKeyDown Tag Int
     | ShowTODO
     | HideTODO
 
@@ -339,8 +339,8 @@ update msg model =
         TagCatInputUpdated f ->
             tagCatInputUpdated f model
 
-        TagCatInputKeyDown key ->
-            tagCatInputKeyDown key model
+        TagCatInputKeyDown tag key ->
+            tagCatInputKeyDown tag key model
 
         OnSplKeyActivated key ->
             onSplKeyActivated key model
@@ -358,13 +358,13 @@ update msg model =
             selectFirstPing model
 
         AddCurrentTag tag ->
-            ( model, addTagsToSel [ tag ] )
+            addUserTag tag model
 
         RemoveCurrentTag tag ->
             ( model, rmTagsFromSel [ tag ] )
 
         SetTagCat tag cat ->
-            ( { model | input_tags = "", input_tag_cat = "", dialog = Nothing }
+            ( { model | input_tag_cat = "", dialog = Nothing }
             , tagCatSet tag cat
             )
 
@@ -444,7 +444,7 @@ tagInputKeyDown key model =
             ( 13, 27, 9 )
     in
         if key == enter then
-            add_input_tag_1 model
+            addUserTag model.input_tags { model | input_tags = "" }
         else if key == esc then
             clear_input_tag_1 model
         else if key == tab then
@@ -453,15 +453,21 @@ tagInputKeyDown key model =
             ( model, Cmd.none )
 
 
-add_input_tag_1 : Model -> ( Model, Cmd Msg )
-add_input_tag_1 model =
+{-|
+        outcome/
+Add user tag to current selection in model. If the tag has no category
+pop up a window allowing the user to incrementally categorize at this
+point
+-}
+addUserTag : Tag -> Model -> ( Model, Cmd Msg )
+addUserTag tag model =
     let
         is_categorized_tag =
             List.foldr
                 (\cat accum ->
                     List.foldr
                         (\t acc ->
-                            if strEq t model.input_tags then
+                            if strEq t tag then
                                 True
                             else
                                 acc
@@ -472,26 +478,12 @@ add_input_tag_1 model =
                 False
                 model.cats
     in
-        if strEq "" model.input_tags then
+        if strEq "" tag then
             ( model, Cmd.none )
-        else if is_categorized_tag then
-            add_input_tag_to_ping_1 model
+        else if is_categorized_tag || specialTag tag then
+            ( model, addTagsToSel [ tag ] )
         else
-            categorize_tag_1 model
-
-
-add_input_tag_to_ping_1 : Model -> ( Model, Cmd Msg )
-add_input_tag_to_ping_1 model =
-    let
-        m =
-            { model | input_tags = "" }
-    in
-        ( m, addTagsToSel [ model.input_tags ] )
-
-
-categorize_tag_1 : Model -> ( Model, Cmd Msg )
-categorize_tag_1 model =
-    ( { model | dialog = Just CategorizeCurrentTag }, focusTagCatInput )
+            ( { model | dialog = Just (CategorizeTag tag) }, focusTagCatInput )
 
 
 clear_input_tag_1 : Model -> ( Model, Cmd Msg )
@@ -512,20 +504,17 @@ tagCatInputUpdated f model =
         outcome/
 Handle "enter" and "escape"
 -}
-tagCatInputKeyDown : Int -> Model -> ( Model, Cmd Msg )
-tagCatInputKeyDown key model =
+tagCatInputKeyDown : Tag -> Int -> Model -> ( Model, Cmd Msg )
+tagCatInputKeyDown tag key model =
     let
         ( enter, esc ) =
             ( 13, 27 )
 
         m =
             { model | input_tag_cat = "", dialog = Nothing }
-
-        u =
-            { m | input_tags = "" }
     in
         if key == enter then
-            set_tag_from_input_cat_1 model u
+            set_tag_from_input_cat_1 tag model
         else if key == esc then
             ( m, focusTagInput )
         else
@@ -585,16 +574,20 @@ getMatchingCat model =
                     Nothing
 
 
-set_tag_from_input_cat_1 : Model -> Model -> ( Model, Cmd Msg )
-set_tag_from_input_cat_1 model newmodel =
-    case getMatchingCat model of
-        Nothing ->
-            ( newmodel
-            , Cmd.batch [ focusTagInput, addTagsToSel [ model.input_tags ] ]
-            )
+set_tag_from_input_cat_1 : Tag -> Model -> ( Model, Cmd Msg )
+set_tag_from_input_cat_1 tag model =
+    let
+        m =
+            { model | input_tag_cat = "", dialog = Nothing }
+    in
+        case getMatchingCat model of
+            Nothing ->
+                ( m
+                , Cmd.batch [ focusTagInput, addTagsToSel [ tag ] ]
+                )
 
-        Just c ->
-            ( newmodel, tagCatSet model.input_tags c )
+            Just c ->
+                ( m, tagCatSet tag c )
 
 
 {-|
@@ -2848,7 +2841,7 @@ dialog_box model =
                     , not_done_dialog_1 out_of_sight
                     , edit_tags_dialog_1 model [] out_of_sight
                     , edit_bricks_dialog_1 "" out_of_sight
-                    , categorize_current_tag_1 Nothing
+                    , categorize_current_tag_1 "" Nothing
                     ]
 
             Just Loading ->
@@ -2858,7 +2851,7 @@ dialog_box model =
                     , not_done_dialog_1 out_of_sight
                     , edit_tags_dialog_1 model [] out_of_sight
                     , edit_bricks_dialog_1 "" out_of_sight
-                    , categorize_current_tag_1 Nothing
+                    , categorize_current_tag_1 "" Nothing
                     ]
 
             Just NotDone ->
@@ -2868,7 +2861,7 @@ dialog_box model =
                     , not_done_dialog_1 (top_pos p.dialog.not_done.height)
                     , edit_tags_dialog_1 model [] out_of_sight
                     , edit_bricks_dialog_1 "" out_of_sight
-                    , categorize_current_tag_1 Nothing
+                    , categorize_current_tag_1 "" Nothing
                     ]
 
             Just (EditTags edit_tags_data) ->
@@ -2881,7 +2874,7 @@ dialog_box model =
                         edit_tags_data
                         (top_pos p.dialog.edit_tags.height)
                     , edit_bricks_dialog_1 "" out_of_sight
-                    , categorize_current_tag_1 Nothing
+                    , categorize_current_tag_1 "" Nothing
                     ]
 
             Just (EditBricks v) ->
@@ -2891,17 +2884,17 @@ dialog_box model =
                     , not_done_dialog_1 out_of_sight
                     , edit_tags_dialog_1 model [] out_of_sight
                     , edit_bricks_dialog_1 v (top_pos p.dialog.edit_bricks.height)
-                    , categorize_current_tag_1 Nothing
+                    , categorize_current_tag_1 "" Nothing
                     ]
 
-            Just CategorizeCurrentTag ->
+            Just (CategorizeTag tag) ->
                 Html.div []
                     [ overlay_1 overlay_top_pos
                     , loading_dialog_1 out_of_sight
                     , not_done_dialog_1 out_of_sight
                     , edit_tags_dialog_1 model [] out_of_sight
                     , edit_bricks_dialog_1 "" out_of_sight
-                    , categorize_current_tag_1 (Just model)
+                    , categorize_current_tag_1 tag (Just model)
                     ]
 
 
@@ -3319,18 +3312,18 @@ edit_bricks_dialog_1 v top_pos =
             ]
 
 
-categorize_current_tag_1 : Maybe Model -> Html.Html Msg
-categorize_current_tag_1 model =
+categorize_current_tag_1 : Tag -> Maybe Model -> Html.Html Msg
+categorize_current_tag_1 tag model =
     case model of
         Nothing ->
             Html.text ""
 
         Just m ->
-            cat_curr_diag_1 m
+            cat_curr_diag_1 tag m
 
 
-cat_curr_diag_1 : Model -> Html.Html Msg
-cat_curr_diag_1 model =
+cat_curr_diag_1 : Tag -> Model -> Html.Html Msg
+cat_curr_diag_1 tag model =
     let
         style =
             HA.style
@@ -3346,13 +3339,13 @@ cat_curr_diag_1 model =
                 ]
     in
         Html.div [ style ]
-            [ cat_curr_title_1 model
-            , cat_curr_cats_1 model
+            [ cat_curr_title_1 tag model
+            , cat_curr_cats_1 tag model
             ]
 
 
-cat_curr_title_1 : Model -> Html.Html Msg
-cat_curr_title_1 model =
+cat_curr_title_1 : Tag -> Model -> Html.Html Msg
+cat_curr_title_1 tag model =
     let
         style =
             HA.style
@@ -3369,31 +3362,31 @@ cat_curr_title_1 model =
                 ]
     in
         Html.div [ style ]
-            [ Html.div [] [ Html.text <| model.input_tags ++ " is a:" ]
+            [ Html.div [] [ Html.text <| tag ++ " is a:" ]
             , Html.input
                 [ HA.id tagCatInputID
                 , HA.value model.input_tag_cat
                 , HE.onInput TagCatInputUpdated
-                , onKeyDown TagCatInputKeyDown
+                , onKeyDown (TagCatInputKeyDown tag)
                 , inp_style
                 ]
                 []
             ]
 
 
-cat_curr_cats_1 : Model -> Html.Html Msg
-cat_curr_cats_1 model =
+cat_curr_cats_1 : Tag -> Model -> Html.Html Msg
+cat_curr_cats_1 tag model =
     let
         style =
             HA.style
                 [ ( "width", "100%" )
                 ]
     in
-        Html.div [ style ] (List.map (cat_curr_cat_1 model) show_cats)
+        Html.div [ style ] (List.map (cat_curr_cat_1 tag model) show_cats)
 
 
-cat_curr_cat_1 : Model -> ( String, String, String ) -> Html.Html Msg
-cat_curr_cat_1 model ( name, singular, icon ) =
+cat_curr_cat_1 : Tag -> Model -> ( String, String, String ) -> Html.Html Msg
+cat_curr_cat_1 tag model ( name, singular, icon ) =
     let
         sel_style =
             HA.style
@@ -3431,7 +3424,7 @@ cat_curr_cat_1 model ( name, singular, icon ) =
         Html.div
             [ class "tag-cat"
             , style
-            , HE.onClick (SetTagCat model.input_tags name)
+            , HE.onClick (SetTagCat tag name)
             ]
             [ Html.img [ icon_style, HA.src icon ] []
             , Html.text singular
