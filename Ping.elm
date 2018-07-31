@@ -665,12 +665,14 @@ onSplKeysReleased model =
 {-|
         outcome/
 The window is about to be hidden. When it next shows it should look like
-it's a newly appearing window. For this, we reset the selections to null
-and scroll everything back to the top.
+it's a newly appearing window. For this, we reset the selections to
+null, focus the input box, and scroll everything back to the top.
 -}
 onPrepareToHide : Model -> ( Model, Cmd Msg )
 onPrepareToHide model =
-    ( { model | current = [], shift_start = Nothing }, scrollListsToTop_1 )
+    ( { model | current = [], shift_start = Nothing, dialog = Nothing }
+    , Cmd.batch [ scrollListsToTop_1, focusTagInput ]
+    )
 
 
 {-|
@@ -2497,6 +2499,7 @@ tag_input_1 model =
             , HA.value model.input_tags
             , HE.onInput TagInputUpdated
             , onKeyDown TagInputKeyDown
+            , HA.autofocus True
             ]
             []
 
