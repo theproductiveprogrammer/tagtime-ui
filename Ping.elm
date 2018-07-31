@@ -2385,6 +2385,11 @@ category_tags_1 model bg_color sel_tag_color tags ndx =
             (List.map (category_tag_1 model sel_tag_color) tags)
 
 
+{-|
+            outcome/
+Show each category tag as a click-able button. If the tag is empty show
+it as a divider.
+-}
 category_tag_1 : Model -> String -> String -> Html.Html Msg
 category_tag_1 model sel_tag_color tag =
     let
@@ -2430,8 +2435,11 @@ category_tag_1 model sel_tag_color tag =
                 NoSelection ->
                     ( HA.style icon_style, SelectFirstPing )
     in
-        Html.div [ style ]
-            [ Html.span [ btn_style, HE.onClick msg ] [ Html.text tag ] ]
+        if tag == "" then
+            Html.div [ style ] [ Html.span [] [ Html.text "*" ] ]
+        else
+            Html.div [ style ]
+                [ Html.span [ btn_style, HE.onClick msg ] [ Html.text tag ] ]
 
 
 {-|
@@ -2551,6 +2559,15 @@ show_tag_1 model tag =
                 , ( "cursor", "pointer" )
                 ]
 
+        divider_style =
+            HA.style
+                [ ( "padding", p.tag_selection.tags.container_padding )
+                , ( "line-height", px p.tag_selection.tags.height )
+                , ( "color", p.tag_selection.tags.color )
+                , ( "display", "inline-table" )
+                , ( "font-size", "1.4em" )
+                ]
+
         tag_style =
             [ ( "padding", p.tag_selection.tags.tag_padding ) ]
 
@@ -2581,8 +2598,11 @@ show_tag_1 model tag =
                 NoSelection ->
                     ( HA.style tag_style, SelectFirstPing )
     in
-        Html.span [ style, HE.onClick msg ]
-            [ Html.span [ btn_style ] [ Html.text tag ] ]
+        if tag == "" then
+            Html.div [ divider_style ] [ Html.span [] [ Html.text "|" ] ]
+        else
+            Html.span [ style, HE.onClick msg ]
+                [ Html.span [ btn_style ] [ Html.text tag ] ]
 
 
 {-|
@@ -3656,11 +3676,15 @@ it no longer looks strange:
 
 So what we will do is show the top and alphabetical lists as long as
 there are enough items and just the alphabetical list if there are not.
+We put a blank tag between to display a visual break between top tags
+and all tags.
 -}
 selectableTags : List Tag -> List Tag -> Int -> List Tag
 selectableTags tags top_tags num_display =
-    if List.length tags >= num_display && List.length top_tags >= 5 then
-        List.append top_tags tags
+    if List.length tags >= num_display && List.length top_tags >= 1 then
+        List.append top_tags ("" :: tags)
+    else if List.length top_tags == List.length tags then
+        top_tags
     else
         tags
 
