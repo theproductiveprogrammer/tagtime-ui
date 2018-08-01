@@ -3008,6 +3008,8 @@ not_done_dialog_1 top_pos =
 Show a window that allows users to edit tags. This contains all the tags
 matching the user filter with their categories and options for renaming
 and deleting.
+TODO: Large set of tags take so long to appear that it hangs. For now we
+limit the number of tags to a couple of hundred max.
 -}
 edit_tags_dialog_1 : Model -> List EditingTag -> Int -> Html.Html Msg
 edit_tags_dialog_1 model edit_tags_data top_pos =
@@ -3028,7 +3030,8 @@ edit_tags_dialog_1 model edit_tags_data top_pos =
                 ]
 
         tags =
-            filtered_edit_tags model edit_tags_data
+            List.take 512 <|
+                filtered_edit_tags model edit_tags_data
     in
         Html.div [ style ]
             [ edit_tags_dialog_title_1
