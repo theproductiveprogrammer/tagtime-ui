@@ -46,6 +46,8 @@ type alias Model =
     , shift_start : Maybe Unix
     , ctrl_on : Bool
     , input_tags : String
+    , input_tags_direct_entry : String
+    , ac_ndx : Int
     , input_tag_cat : String
     , dialog : Maybe Dialog
     }
@@ -247,6 +249,8 @@ init =
       , shift_start = Nothing
       , ctrl_on = False
       , input_tags = ""
+      , input_tags_direct_entry = ""
+      , ac_ndx = -1
       , input_tag_cat = ""
       , dialog = Just Loading
       }
@@ -275,6 +279,7 @@ type Msg
     | SetLatestSelection (List Unix)
     | LoadingDone Bool
     | OnSplKeyActivated String
+    | OnSplKeyReleased String
     | OnSplKeysReleased Bool
     | OnPrepareToHide Bool
     | ClickSelect Unix
@@ -343,7 +348,10 @@ update msg model =
             tagCatInputKeyDown tag key model
 
         OnSplKeyActivated key ->
-            onSplKeyActivated key model
+            onSplKeyUpDown True key model
+
+        OnSplKeyReleased key ->
+            onSplKeyUpDown False key model
 
         OnSplKeysReleased _ ->
             onSplKeysReleased model
@@ -430,7 +438,7 @@ Update the "all tags" list to match the new filter
 -}
 tagInputUpdated : String -> Model -> ( Model, Cmd Msg )
 tagInputUpdated f model =
-    ( { model | input_tags = f }, Cmd.none )
+    ( { model | input_tags = f, input_tags_direct_entry = f, ac_ndx = -1 }, Cmd.none )
 
 
 {-|
@@ -442,11 +450,14 @@ tagInputKeyDown key model =
     let
         ( enter, esc, tab ) =
             ( 13, 27, 9 )
+
+        clear_inputs =
+            { model | input_tags = "", input_tags_direct_entry = "", ac_ndx = -1 }
     in
         if key == enter then
-            addUserTag model.input_tags { model | input_tags = "" }
+            addUserTag model.input_tags clear_inputs
         else if key == esc then
-            clear_input_tag_1 model
+            ( clear_inputs, Cmd.none )
         else if key == tab then
             match_existing_tag_1 model
         else
@@ -484,11 +495,6 @@ addUserTag tag model =
             ( model, addTagsToSel [ tag ] )
         else
             ( { model | dialog = Just (CategorizeTag tag) }, focusTagCatInput )
-
-
-clear_input_tag_1 : Model -> ( Model, Cmd Msg )
-clear_input_tag_1 model =
-    ( { model | input_tags = "" }, Cmd.none )
 
 
 {-|
@@ -606,19 +612,35 @@ tagCatSet tag cat =
 
 {-|
         outcome/
-We find the first match and populate the input with that value. Because
-tab causes us to spring out of the field we will re-bring focus back.
+We rotate among the filtered tags so that the user can just hit enter
+and accept them.
 -}
 match_existing_tag_1 : Model -> ( Model, Cmd Msg )
 match_existing_tag_1 model =
     let
-        get_first_match =
-            { model | input_tags = first_match }
+        matches =
+            filtered_tags model
 
-        first_match =
-            Maybe.withDefault model.input_tags <| List.head (filtered_tags model)
+        ac_ndx =
+            if model.shift_on then
+                if model.ac_ndx >= 0 then
+                    model.ac_ndx - 1
+                else
+                    List.length matches - 1
+            else if List.length matches - 1 > model.ac_ndx then
+                model.ac_ndx + 1
+            else
+                -1
+
+        tag =
+            if ac_ndx == -1 then
+                model.input_tags_direct_entry
+            else
+                List.drop ac_ndx matches
+                    |> List.head
+                    |> Maybe.withDefault model.input_tags_direct_entry
     in
-        ( get_first_match, focusTagInput )
+        ( { model | input_tags = tag, ac_ndx = ac_ndx }, focusTagInput )
 
 
 {-|
@@ -626,26 +648,32 @@ match_existing_tag_1 model =
 Keep track of the user pressing and releasing special keys - shift and
 control
 -}
-onSplKeyActivated : String -> Model -> ( Model, Cmd Msg )
-onSplKeyActivated key model =
+onSplKeyUpDown : Bool -> String -> Model -> ( Model, Cmd Msg )
+onSplKeyUpDown activated key model =
     if key == "Shift" then
-        ( { model | shift_on = True }, Cmd.none )
+        ( { model | shift_on = activated }, Cmd.none )
     else if key == "Control" || key == "Meta" then
-        ( { model | ctrl_on = True }, Cmd.none )
+        ( { model | ctrl_on = activated }, Cmd.none )
     else if key == "Enter" then
-        case model.dialog of
-            Just (EditTags _) ->
-                editTagsDone model
+        if activated then
+            case model.dialog of
+                Just (EditTags _) ->
+                    editTagsDone model
 
-            _ ->
-                ( model, Cmd.none )
+                _ ->
+                    ( model, Cmd.none )
+        else
+            ( model, Cmd.none )
     else if key == "Escape" then
-        case model.dialog of
-            Just (EditTags _) ->
-                editTagsCancel model
+        if activated then
+            case model.dialog of
+                Just (EditTags _) ->
+                    editTagsCancel model
 
-            _ ->
-                ( model, Cmd.none )
+                _ ->
+                    ( model, Cmd.none )
+        else
+            ( model, Cmd.none )
     else
         ( model, Cmd.none )
 
@@ -919,6 +947,7 @@ subscriptions _ =
         , latestSel SetLatestSelection
         , loadingDone LoadingDone
         , splKeyActive OnSplKeyActivated
+        , splKeyReleased OnSplKeyReleased
         , splKeysReleased OnSplKeysReleased
         , prepareToHide OnPrepareToHide
         ]
@@ -1001,6 +1030,9 @@ In order to get the status of special keys - shift, control, alt, meta,
 arrowleft... - we use javascript as it has much better support than elm.
 -}
 port splKeyActive : (String -> msg) -> Sub msg
+
+
+port splKeyReleased : (String -> msg) -> Sub msg
 
 
 port splKeysReleased : (Bool -> msg) -> Sub msg
@@ -2515,6 +2547,8 @@ table display to achieve the effect.
 We filter the user search against all tags and show it in a nice
 scrollable list. We make the height slightly bigger to hide the
 scrollbar.
+
+NB: We only show the top 'n' tags because otherwise it gets too slow
 -}
 tags_1 : Model -> Html.Html Msg
 tags_1 model =
@@ -2534,13 +2568,16 @@ tags_1 model =
                 ]
 
         tags =
-            List.take 100 <| filtered_tags model
+            List.take 128 <| filtered_tags model
+
+        ndxs =
+            List.range 0 (List.length tags)
     in
-        Html.div [ style ] (List.map (show_tag_1 model) tags)
+        Html.div [ style ] (List.map2 (show_tag_1 model) tags ndxs)
 
 
-show_tag_1 : Model -> Tag -> Html.Html Msg
-show_tag_1 model tag =
+show_tag_1 : Model -> Tag -> Int -> Html.Html Msg
+show_tag_1 model tag ndx =
     let
         style =
             HA.style
@@ -2577,19 +2614,29 @@ show_tag_1 model tag =
         selstatus =
             tagInSelection model tag
 
-        ( btn_style, msg ) =
+        ( btn_press_style, msg ) =
             case selstatus of
                 InAll ->
-                    ( HA.style all_sel_style, RemoveCurrentTag tag )
+                    ( all_sel_style, RemoveCurrentTag tag )
 
                 InSome ->
-                    ( HA.style some_sel_style, AddCurrentTag tag )
+                    ( some_sel_style, AddCurrentTag tag )
 
                 InNone ->
-                    ( HA.style tag_style, AddCurrentTag tag )
+                    ( tag_style, AddCurrentTag tag )
 
                 NoSelection ->
-                    ( HA.style tag_style, SelectFirstPing )
+                    ( tag_style, SelectFirstPing )
+
+        btn_style =
+            if ndx == model.ac_ndx then
+                let
+                    s =
+                        List.filter (\( s, _ ) -> s /= "border") btn_press_style
+                in
+                    HA.style (( "border", "1px dashed yellow" ) :: s)
+            else
+                HA.style btn_press_style
     in
         if tag == "" then
             Html.div [ divider_style ] [ Html.span [] [ Html.text "|" ] ]
@@ -3526,7 +3573,7 @@ filtered_tags model =
             String.toLower <| String.trim s
 
         f =
-            normalize model.input_tags
+            normalize model.input_tags_direct_entry
 
         matches tag =
             if specialTag tag then
@@ -3556,7 +3603,7 @@ filtered_edit_tags model etags =
             String.toLower <| String.trim s
 
         f =
-            normalize model.input_tags
+            normalize model.input_tags_direct_entry
 
         matches etag =
             if String.isEmpty f then
