@@ -2863,96 +2863,58 @@ that activity. The visual overlay also helps keep them oriented where
 they are in the visual flow.
 
         outcome/
-We have an overlay and various dialogs constructed and kept
-"out-of-sight" below the visible window. When showing dialogs we
-reposition them which allows them to use a smooth CSS transition and
-glide in with a nice animation.
+TODO: Animate the dialog in using something like the following strategy.
+Load an overlay and create the dialog box "out-of-sight" below the
+visible window. Then hand control back to the browser to render and,
+on the next tick, position the dialog correctly allowing it to use a
+smooth CSS transition and glide in with a nice animation.
 -}
 dialog_box : Model -> Html.Html Msg
 dialog_box model =
     let
-        overlay_top_pos =
-            0
-
-        out_of_sight =
-            1000
-
         top_pos height =
             (p.window.height - height) // 2
     in
         case model.dialog of
             Nothing ->
-                Html.div []
-                    [ overlay_1 out_of_sight
-                    , loading_dialog_1 out_of_sight
-                    , not_done_dialog_1 out_of_sight
-                    , edit_tags_dialog_1 model [] out_of_sight
-                    , edit_bricks_dialog_1 "" out_of_sight
-                    , categorize_current_tag_1 "" Nothing
-                    ]
+                Html.div [] []
 
             Just Loading ->
-                Html.div []
-                    [ overlay_1 out_of_sight
-                    , loading_dialog_1 overlay_top_pos
-                    , not_done_dialog_1 out_of_sight
-                    , edit_tags_dialog_1 model [] out_of_sight
-                    , edit_bricks_dialog_1 "" out_of_sight
-                    , categorize_current_tag_1 "" Nothing
-                    ]
+                Html.div [] [ overlay_1, loading_dialog_1 ]
 
             Just NotDone ->
                 Html.div []
-                    [ overlay_1 overlay_top_pos
-                    , loading_dialog_1 out_of_sight
+                    [ overlay_1
                     , not_done_dialog_1 (top_pos p.dialog.not_done.height)
-                    , edit_tags_dialog_1 model [] out_of_sight
-                    , edit_bricks_dialog_1 "" out_of_sight
-                    , categorize_current_tag_1 "" Nothing
                     ]
 
             Just (EditTags edit_tags_data) ->
                 Html.div []
-                    [ overlay_1 overlay_top_pos
-                    , loading_dialog_1 out_of_sight
-                    , not_done_dialog_1 out_of_sight
+                    [ overlay_1
                     , edit_tags_dialog_1
                         model
                         edit_tags_data
                         (top_pos p.dialog.edit_tags.height)
-                    , edit_bricks_dialog_1 "" out_of_sight
-                    , categorize_current_tag_1 "" Nothing
                     ]
 
             Just (EditBricks v) ->
                 Html.div []
-                    [ overlay_1 overlay_top_pos
-                    , loading_dialog_1 out_of_sight
-                    , not_done_dialog_1 out_of_sight
-                    , edit_tags_dialog_1 model [] out_of_sight
+                    [ overlay_1
                     , edit_bricks_dialog_1 v (top_pos p.dialog.edit_bricks.height)
-                    , categorize_current_tag_1 "" Nothing
                     ]
 
             Just (CategorizeTag tag) ->
-                Html.div []
-                    [ overlay_1 overlay_top_pos
-                    , loading_dialog_1 out_of_sight
-                    , not_done_dialog_1 out_of_sight
-                    , edit_tags_dialog_1 model [] out_of_sight
-                    , edit_bricks_dialog_1 "" out_of_sight
-                    , categorize_current_tag_1 tag (Just model)
-                    ]
+                Html.div [] [ overlay_1, categorize_current_tag_1 tag model ]
 
 
-overlay_1 : Int -> Html.Html Msg
-overlay_1 top_pos =
+overlay_1 : Html.Html Msg
+overlay_1 =
     let
         style =
             HA.style
                 [ ( "position", "absolute" )
                 , ( "left", "0" )
-                , ( "top", px top_pos )
+                , ( "top", "0" )
                 , ( "width", px p.window.width )
                 , ( "height", px p.window.height )
                 , ( "background", "black" )
@@ -2966,13 +2928,13 @@ overlay_1 top_pos =
         outcome/
 Show the 'loading' icon
 -}
-loading_dialog_1 : Int -> Html.Html Msg
-loading_dialog_1 top_pos =
+loading_dialog_1 : Html.Html Msg
+loading_dialog_1 =
     let
         style =
             HA.style
                 [ ( "position", "absolute" )
-                , ( "top", px top_pos )
+                , ( "top", "0" )
                 , ( "width", px p.window.width )
                 , ( "height", px p.window.height )
                 , ( "background", "white" )
@@ -3362,18 +3324,8 @@ edit_bricks_dialog_1 v top_pos =
             ]
 
 
-categorize_current_tag_1 : Tag -> Maybe Model -> Html.Html Msg
+categorize_current_tag_1 : Tag -> Model -> Html.Html Msg
 categorize_current_tag_1 tag model =
-    case model of
-        Nothing ->
-            Html.text ""
-
-        Just m ->
-            cat_curr_diag_1 tag m
-
-
-cat_curr_diag_1 : Tag -> Model -> Html.Html Msg
-cat_curr_diag_1 tag model =
     let
         style =
             HA.style
