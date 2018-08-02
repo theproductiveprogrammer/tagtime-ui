@@ -11,6 +11,7 @@ import Dom.Scroll as Scroll
 import Json.Decode as Decode
 import Chart
 import Dict
+import Set
 
 
 {-|
@@ -131,6 +132,7 @@ type Dialog
     | EditTags (List EditingTag)
     | EditBricks String
     | CategorizeTag Tag
+    | KBShorts
 
 
 {-|
@@ -230,6 +232,11 @@ energyTags =
 specialTag : Tag -> Bool
 specialTag t =
     List.member t energyTags
+
+
+displayTags : List Tag -> List Tag
+displayTags tags =
+    List.filter (\t -> not (specialTag t)) tags
 
 
 {-|
@@ -372,12 +379,10 @@ update msg model =
             ( model, rmTagsFromSel [ tag ] )
 
         SetTagCat tag cat ->
-            ( { model | input_tag_cat = "", dialog = Nothing }
-            , tagCatSet tag cat
-            )
+            dialogDone { model | input_tag_cat = "" } (tagCatSet tag cat)
 
         HideWindow ->
-            ( model, Cmd.batch [ show "off", setSel [] ] )
+            ( model, hideWindowCmds )
 
         OnScrollTagsUp r ->
             onScrollTagsUp r model
@@ -401,7 +406,7 @@ update msg model =
             editTagsDone model
 
         EditTagsCancel ->
-            editTagsCancel model
+            dialogDone model Cmd.none
 
         AddBrick brick ->
             addBrick brick model
@@ -413,20 +418,20 @@ update msg model =
             ( { model | dialog = Just (EditBricks v) }, Cmd.none )
 
         EditBricksDone ->
-            ( { model | dialog = Nothing }, setBricks (stringbricks model) )
+            dialogDone model (setBricks (stringbricks model))
 
         ShowTODO ->
             ( { model | dialog = Just NotDone }, Cmd.none )
 
         HideTODO ->
-            ( { model | dialog = Nothing }, Cmd.none )
+            dialogDone model Cmd.none
 
 
 finishedLoading : Model -> ( Model, Cmd Msg )
 finishedLoading model =
     case model.dialog of
         Just Loading ->
-            ( { model | dialog = Nothing }, Cmd.none )
+            dialogDone model Cmd.none
 
         _ ->
             ( model, Cmd.none )
@@ -490,11 +495,16 @@ addUserTag tag model =
                 model.cats
     in
         if strEq "" tag then
-            ( model, Cmd.none )
+            openKBShorts model
         else if is_categorized_tag || specialTag tag then
             ( model, addTagsToSel [ tag ] )
         else
             ( { model | dialog = Just (CategorizeTag tag) }, focusTagCatInput )
+
+
+openKBShorts : Model -> ( Model, Cmd Msg )
+openKBShorts model =
+    ( { model | dialog = Just KBShorts }, stopKeyHandling True )
 
 
 {-|
@@ -515,14 +525,11 @@ tagCatInputKeyDown tag key model =
     let
         ( enter, esc ) =
             ( 13, 27 )
-
-        m =
-            { model | input_tag_cat = "", dialog = Nothing }
     in
         if key == enter then
             set_tag_from_input_cat_1 tag model
         else if key == esc then
-            ( m, focusTagInput )
+            dialogDone { model | input_tag_cat = "" } Cmd.none
         else
             ( model, Cmd.none )
 
@@ -584,16 +591,14 @@ set_tag_from_input_cat_1 : Tag -> Model -> ( Model, Cmd Msg )
 set_tag_from_input_cat_1 tag model =
     let
         m =
-            { model | input_tag_cat = "", dialog = Nothing }
+            { model | input_tag_cat = "" }
     in
         case getMatchingCat model of
             Nothing ->
-                ( m
-                , Cmd.batch [ focusTagInput, addTagsToSel [ tag ] ]
-                )
+                dialogDone m (addTagsToSel [ tag ])
 
             Just c ->
-                ( m, tagCatSet tag c )
+                dialogDone m (tagCatSet tag c)
 
 
 {-|
@@ -654,28 +659,97 @@ onSplKeyUpDown activated key model =
         ( { model | shift_on = activated }, Cmd.none )
     else if key == "Control" || key == "Meta" then
         ( { model | ctrl_on = activated }, Cmd.none )
-    else if key == "Enter" then
-        if activated then
-            case model.dialog of
-                Just (EditTags _) ->
-                    editTagsDone model
-
-                _ ->
-                    ( model, Cmd.none )
-        else
-            ( model, Cmd.none )
-    else if key == "Escape" then
-        if activated then
-            case model.dialog of
-                Just (EditTags _) ->
-                    editTagsCancel model
-
-                _ ->
-                    ( model, Cmd.none )
-        else
-            ( model, Cmd.none )
+    else if activated then
+        dialogKeysHandler key model
     else
         ( model, Cmd.none )
+
+
+{-|
+            outcome/
+Handle special keys for any active dialog
+-}
+dialogKeysHandler : String -> Model -> ( Model, Cmd Msg )
+dialogKeysHandler key model =
+    case model.dialog of
+        Just (EditTags _) ->
+            edittags_keyshandler key model
+
+        Just KBShorts ->
+            kbshorts_keyshandler key model
+
+        _ ->
+            ( model, Cmd.none )
+
+
+edittags_keyshandler : String -> Model -> ( Model, Cmd Msg )
+edittags_keyshandler key model =
+    if key == "Enter" then
+        editTagsDone model
+    else if key == "Escape" then
+        dialogDone model Cmd.none
+    else
+        ( model, Cmd.none )
+
+
+{-|
+        outcome/
+Update all edited tags and categories
+-}
+editTagsDone : Model -> ( Model, Cmd Msg )
+editTagsDone model =
+    case model.dialog of
+        Just (EditTags edit_tags) ->
+            dialogDone model (tagsEdited edit_tags)
+
+        _ ->
+            ( model, Cmd.none )
+
+
+kbshorts_keyshandler : String -> Model -> ( Model, Cmd Msg )
+kbshorts_keyshandler key model =
+    if key == "Enter" && model.shift_on then
+        dialogDone model hideWindowCmds
+    else if key == "Escape" then
+        dialogDone model Cmd.none
+    else if key == "r" || key == "R" then
+        if List.length (kbshorts_sel_tags model) == 0 then
+            case kbshorts_repeat_ping model of
+                Nothing ->
+                    ( model, Cmd.none )
+
+                Just p ->
+                    ( model, addTagsToSel p.tags )
+        else
+            dialogDone model Cmd.none
+    else if key == "1" then
+        ( model, addTagsToSel [ eHigh ] )
+    else if key == "2" then
+        ( model, addTagsToSel [ eMed ] )
+    else if key == "3" then
+        ( model, addTagsToSel [ eLow ] )
+    else if key == "4" then
+        ( model, addTagsToSel [ eSleep ] )
+    else
+        ( model, Cmd.none )
+
+
+kbshorts_sel_tags : Model -> List Tag
+kbshorts_sel_tags model =
+    List.map (alwaysGetPing model) model.current
+        |> List.map .tags
+        |> List.concat
+        |> Set.fromList
+        |> Set.toList
+
+
+kbshorts_repeat_ping : Model -> Maybe Ping
+kbshorts_repeat_ping model =
+    List.reverse model.pingset
+        |> List.map (\dp -> List.reverse dp.pings)
+        |> List.concat
+        |> List.filter (\p -> List.length (displayTags p.tags) > 0)
+        |> List.head
 
 
 onSplKeysReleased : Model -> ( Model, Cmd Msg )
@@ -692,7 +766,7 @@ null, focus the input box, and scroll everything back to the top.
 onPrepareToHide : Model -> ( Model, Cmd Msg )
 onPrepareToHide model =
     ( { model | current = [], shift_start = Nothing, dialog = Nothing }
-    , Cmd.batch [ scrollListsToTop_1, focusTagInput ]
+    , Cmd.batch [ scrollListsToTop_1, stopKeyHandling False, focusTagInput ]
     )
 
 
@@ -853,32 +927,19 @@ edit_tag_vals_1 etag etags model =
 
 {-|
         outcome/
-Update all edited tags and categories
+Close the dialog, executing any commands, restoring key handling and
+refocusing the main input field.
 -}
-editTagsDone : Model -> ( Model, Cmd Msg )
-editTagsDone model =
-    case model.dialog of
-        Just (EditTags edit_tags) ->
-            edit_tags_done_1 edit_tags model
-
-        _ ->
-            ( model, Cmd.none )
-
-
-edit_tags_done_1 : List EditingTag -> Model -> ( Model, Cmd Msg )
-edit_tags_done_1 edit_tags model =
+dialogDone : Model -> Cmd Msg -> ( Model, Cmd Msg )
+dialogDone model cmd =
     ( { model | dialog = Nothing }
-    , Cmd.batch [ tagsEdited edit_tags, focusTagInput ]
+    , Cmd.batch [ cmd, stopKeyHandling False, focusTagInput ]
     )
 
 
-{-|
-        outcome/
-Discard any editing changes and remove the dialog
--}
-editTagsCancel : Model -> ( Model, Cmd Msg )
-editTagsCancel model =
-    ( { model | dialog = Nothing }, focusTagInput )
+hideWindowCmds : Cmd Msg
+hideWindowCmds =
+    Cmd.batch [ show "off", setSel [] ]
 
 
 addBrick : Brick -> Model -> ( Model, Cmd Msg )
@@ -972,6 +1033,16 @@ ourselves). Therefore we create a port through which we send a message
 asking the main process to show/hide our browser window.
 -}
 port show : String -> Cmd msg
+
+
+{-|
+        understand/
+When showing some dialogs we would like to comprehensively handle all
+keys (without default behaviour). In other cases (say where there are
+text-boxes or input boxes) we want the default behaviour. For this we
+inform javascript to preventDefault or not.
+-}
+port stopKeyHandling : Bool -> Cmd msg
 
 
 {-|
@@ -1431,6 +1502,15 @@ type alias ViewParams =
                 , icon_width : Int
                 }
             }
+        , kb_shorts :
+            { width : Int
+            , height : Int
+            , background : String
+            , padding : Int
+            , font_size : Int
+            , border_radius : Int
+            , box_shadow : String
+            }
         }
     }
 
@@ -1509,7 +1589,7 @@ p =
             , sleepy_background = "linear-gradient(#7b7c9d, #8a8aa8, #9899b3)"
             , height = 48
             , when =
-                { width = 64
+                { width = 32
                 , lpad = 8
                 }
             , tags =
@@ -1749,6 +1829,15 @@ p =
                     , padding = cat_curr_line_padding
                     , icon_width = 24
                     }
+                }
+            , kb_shorts =
+                { width = 300
+                , height = 300
+                , background = "linear-gradient(white, #cacaca)"
+                , padding = 24
+                , font_size = 14
+                , border_radius = 4
+                , box_shadow = "1px 1px 3px 0px black"
                 }
             }
 
@@ -2050,10 +2139,7 @@ show_ping_1 model ping =
                 List.append style_v
                     [ ( "height", px p.ping_entry.height ) ]
     in
-        Html.tr
-            [ style
-            , HE.onClick (ClickSelect ping.unix)
-            ]
+        Html.tr [ style, HE.onClick (ClickSelect ping.unix) ]
             [ ping_when_1 ping, ping_tags_1 ping ]
 
 
@@ -2071,6 +2157,11 @@ ping_when_1 ping =
 
 ping_tags_1 : Ping -> Html.Html Msg
 ping_tags_1 ping =
+    tagsRow Html.td ping.tags
+
+
+tagsRow : (List (Html.Attribute Msg) -> List (Html.Html Msg) -> Html.Html Msg) -> List String -> Html.Html Msg
+tagsRow elem tags =
     let
         e_color_map =
             [ ( eSleep, "rgba(85, 86, 143, 0.75)" )
@@ -2082,7 +2173,7 @@ ping_tags_1 ping =
         energy_border =
             List.foldr
                 (\( e, clr ) acc ->
-                    if List.member e ping.tags then
+                    if List.member e tags then
                         "8px solid " ++ clr
                     else
                         acc
@@ -2090,20 +2181,16 @@ ping_tags_1 ping =
                 "none"
                 e_color_map
 
-        included t =
-            not <| specialTag t
-
-        tags =
-            String.join ", " (List.filter included ping.tags)
+        t =
+            String.join ", " (displayTags tags)
 
         style =
             HA.style
-                [ ( "width", p.ping_entry.tags.width )
-                , ( "padding", px p.ping_entry.tags.padding )
+                [ ( "padding", px p.ping_entry.tags.padding )
                 , ( "border-right", energy_border )
                 ]
     in
-        Html.td [ style ] [ Html.text tags ]
+        elem [ style ] [ Html.text t ]
 
 
 {-|
@@ -2906,6 +2993,12 @@ dialog_box model =
             Just (CategorizeTag tag) ->
                 Html.div [] [ overlay_1, categorize_current_tag_1 tag model ]
 
+            Just KBShorts ->
+                Html.div []
+                    [ overlay_1
+                    , kb_shorts_1 (top_pos p.dialog.kb_shorts.height) model
+                    ]
+
 
 overlay_1 : Html.Html Msg
 overlay_1 =
@@ -3431,6 +3524,177 @@ cat_curr_cat_1 tag model ( name, singular, icon ) =
             [ Html.img [ icon_style, HA.src icon ] []
             , Html.text singular
             ]
+
+
+kb_shorts_1 : Int -> Model -> Html.Html Msg
+kb_shorts_1 top model =
+    let
+        left_pos =
+            (p.window.width - p.dialog.kb_shorts.width) // 2
+
+        style =
+            HA.style
+                [ ( "position", "absolute" )
+                , ( "top", px top )
+                , ( "left", px left_pos )
+                , ( "width", px p.dialog.kb_shorts.width )
+                , ( "height", px p.dialog.kb_shorts.height )
+                , ( "background", p.dialog.kb_shorts.background )
+                , ( "padding", px p.dialog.kb_shorts.padding )
+                , ( "font-size", px p.dialog.kb_shorts.font_size )
+                , ( "border-radius", px p.dialog.kb_shorts.border_radius )
+                , ( "box-shadow", p.dialog.kb_shorts.box_shadow )
+                ]
+    in
+        Html.div [ style ]
+            [ kb_shorts_title_1 model
+            , kb_shorts_tags_1 model
+            , kb_shorts_energy_1 model
+            , kb_shorts_dismissed_1 model
+            , kb_shorts_icon_1 model
+            ]
+
+
+kb_shorts_title_1 : Model -> Html.Html Msg
+kb_shorts_title_1 model =
+    let
+        style =
+            HA.style
+                [ ( "padding-bottom", "16px" ) ]
+    in
+        Html.div [ style ]
+            [ Html.text "Use any of the following keys to modify the current entry" ]
+
+
+kb_shorts_tags_1 : Model -> Html.Html Msg
+kb_shorts_tags_1 model =
+    let
+        tags =
+            kbshorts_sel_tags model
+
+        style =
+            HA.style
+                [ ( "font-style", "italic" )
+                , ( "max-height", "32px" )
+                , ( "overflow", "scroll" )
+                , ( "text-align", "center" )
+                , ( "padding", "8px" )
+                , ( "box-shadow", "inset 0 0 1px 1px #9E9E9E" )
+                ]
+    in
+        if List.length tags == 0 then
+            kb_shorts_repeat_1 model
+        else
+            kb_shorts_tagsrow_1 False tags
+
+
+kb_shorts_repeat_1 : Model -> Html.Html Msg
+kb_shorts_repeat_1 model =
+    case kbshorts_repeat_ping model of
+        Nothing ->
+            Html.div [] []
+
+        Just p ->
+            let
+                style =
+                    HA.style [ ( "padding-bottom", px 12 ) ]
+            in
+                Html.div []
+                    [ Html.div [ style ]
+                        [ kb_shorts_row_1 "R" "Repeat previous tags" ]
+                    , kb_shorts_tagsrow_1 True p.tags
+                    ]
+
+
+kb_shorts_tagsrow_1 : Bool -> List Tag -> Html.Html Msg
+kb_shorts_tagsrow_1 copy tags =
+    let
+        opacity =
+            if copy then
+                "0.5"
+            else
+                "1.0"
+
+        style =
+            HA.style
+                [ ( "background", "linear-gradient(to bottom right, #f6fdfd, #e9fbfb)" )
+                , ( "height", px 48 )
+                , ( "width", px 256 )
+                , ( "overflow", "scroll" )
+                , ( "margin", "0 auto" )
+                , ( "opacity", opacity )
+                , ( "box-shadow", "0 0 1px 0px black" )
+                ]
+    in
+        Html.div [ style ] [ tagsRow Html.div tags ]
+
+
+kb_shorts_row_1 : String -> String -> Html.Html Msg
+kb_shorts_row_1 key msg =
+    let
+        first_style =
+            HA.style
+                [ ( "display", "inline-block" )
+                , ( "width", px 128 )
+                ]
+
+        key_style =
+            HA.style
+                [ ( "font-weight", "bold" ) ]
+
+        snd_style =
+            HA.style
+                [ ( "display", "inline-block" ) ]
+    in
+        Html.div []
+            [ Html.div [ first_style ]
+                [ Html.span [] [ Html.text "Press " ]
+                , Html.span [ key_style ] [ Html.text key ]
+                , Html.span [] [ Html.text " : " ]
+                ]
+            , Html.div [ snd_style ] [ Html.text msg ]
+            ]
+
+
+kb_shorts_energy_1 : Model -> Html.Html Msg
+kb_shorts_energy_1 model =
+    let
+        style =
+            HA.style [ ( "padding-top", px 24 ) ]
+    in
+        Html.div [ style ]
+            [ kb_shorts_row_1 "1" "High Energy"
+            , kb_shorts_row_1 "2" "Medium Energy"
+            , kb_shorts_row_1 "3" "Low Energy"
+            , kb_shorts_row_1 "4" "Asleep"
+            ]
+
+
+kb_shorts_dismissed_1 : Model -> Html.Html Msg
+kb_shorts_dismissed_1 model =
+    let
+        style =
+            HA.style [ ( "padding-top", px 24 ) ]
+    in
+        Html.div [ style ]
+            [ kb_shorts_row_1 "Esc" "Back"
+            , kb_shorts_row_1 "Shift+Enter" "Done & Close"
+            ]
+
+
+kb_shorts_icon_1 : Model -> Html.Html Msg
+kb_shorts_icon_1 model =
+    let
+        style =
+            HA.style
+                [ ( "width", "32px" )
+                , ( "position", "absolute" )
+                , ( "bottom", "18px" )
+                , ( "right", "18px" )
+                , ( "opacity", "0.9" )
+                ]
+    in
+        Html.img [ style, HA.src "login-icon-322x256.png" ] []
 
 
 
