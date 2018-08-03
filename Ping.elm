@@ -313,6 +313,7 @@ type Msg
     | TagCatInputKeyDown Tag Int
     | ShowTODO
     | HideTODO
+    | RepeatLast Ping
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -425,6 +426,9 @@ update msg model =
 
         HideTODO ->
             dialogDone model Cmd.none
+
+        RepeatLast ping ->
+            repeatLast ping model
 
 
 finishedLoading : Model -> ( Model, Cmd Msg )
@@ -1286,6 +1290,10 @@ type alias ViewParams =
     , done_btn :
         { right : Int
         }
+    , repeat_btn :
+        { right : Int
+        , width : Int
+        }
     , ping_list :
         { top : Int
         , right : Int
@@ -1570,6 +1578,11 @@ p =
 
         done_btn =
             { right = margin_container_right
+            }
+
+        repeat_btn =
+            { right = done_btn.right + 86
+            , width = 96
             }
 
         ping_list =
@@ -1881,6 +1894,7 @@ p =
         , settings_btn = settings_btn
         , close_btn = close_btn
         , done_btn = done_btn
+        , repeat_btn = repeat_btn
         , ping_list = ping_list
         , ping_entry = ping_entry
         , edit_area = edit_area
@@ -1899,7 +1913,7 @@ view : Model -> Html.Html Msg
 view model =
     Html.div []
         [ friction_bar_1
-        , top_panel_1
+        , top_panel_1 model
         , settings_btn_1
         , close_btn_1
         , ping_list_1 model
@@ -1935,8 +1949,8 @@ friction_bar_1 =
 The top panel contains the title and action buttons as well as the
 "settings" and "close" buttons.
 -}
-top_panel_1 : Html.Html Msg
-top_panel_1 =
+top_panel_1 : Model -> Html.Html Msg
+top_panel_1 model =
     let
         style =
             HA.style
@@ -1948,7 +1962,7 @@ top_panel_1 =
                 , ( "box-shadow", p.top_bar.edge_box_shadow )
                 ]
     in
-        Html.div [ style ] [ subtitle_1, done_btn_1 ]
+        Html.div [ style ] [ subtitle_1, repeat_last_1 model, done_btn_1 ]
 
 
 {-|
@@ -1995,6 +2009,46 @@ done_btn_1 =
     in
         Html.div [ style, class "button", HE.onClick HideWindow ]
             [ Html.text "Done" ]
+
+
+{-|
+        outcome/
+The "repeat" button activates if the current ping is empty allowing it
+to copy the previous entry.
+-}
+repeat_last_1 : Model -> Html.Html Msg
+repeat_last_1 model =
+    let
+        style =
+            HA.style
+                [ ( "position", "absolute" )
+                , ( "right", px p.repeat_btn.right )
+                , ( "width", px p.repeat_btn.width )
+                , ( "bottom", px p.top_bar.margin )
+                ]
+
+        active p =
+            Html.div [ style, class "button", HE.onClick (RepeatLast p) ]
+                [ Html.text "Repeat Last" ]
+
+        inactive =
+            Html.div [ style, class "inactive-btn" ]
+                [ Html.text "Repeat Last" ]
+    in
+        if List.length (kbshorts_sel_tags model) == 0 then
+            case kbshorts_repeat_ping model of
+                Nothing ->
+                    inactive
+
+                Just p ->
+                    active p
+        else
+            inactive
+
+
+repeatLast : Ping -> Model -> ( Model, Cmd Msg )
+repeatLast ping model =
+    ( model, addTagsToSel ping.tags )
 
 
 {-|
