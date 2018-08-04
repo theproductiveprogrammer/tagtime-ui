@@ -2125,6 +2125,7 @@ ping_list_1 model =
             [ Html.table
                 [ HA.attribute "cellspacing" "0"
                 , HA.attribute "cellpadding" "0"
+                , HA.attribute "width" "100%"
                 ]
                 (show_dailypings_1 model)
             ]
