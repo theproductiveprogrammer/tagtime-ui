@@ -749,11 +749,21 @@ kbshorts_sel_tags model =
 
 kbshorts_repeat_ping : Model -> Maybe Ping
 kbshorts_repeat_ping model =
-    List.reverse model.pingset
-        |> List.map (\dp -> List.reverse dp.pings)
-        |> List.concat
-        |> List.filter (\p -> List.length (displayTags p.tags) > 0)
-        |> List.head
+    let
+        from =
+            List.minimum model.current
+    in
+        case from of
+            Nothing ->
+                Nothing
+
+            Just unx ->
+                List.reverse model.pingset
+                    |> List.map (\dp -> List.reverse dp.pings)
+                    |> List.concat
+                    |> List.filter
+                        (\p -> p.unix < unx && List.length (displayTags p.tags) > 0)
+                    |> List.head
 
 
 onSplKeysReleased : Model -> ( Model, Cmd Msg )
