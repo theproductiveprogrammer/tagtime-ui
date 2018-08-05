@@ -725,7 +725,7 @@ kbshorts_keyshandler key model =
                 Just p ->
                     ( model, addTagsToSel p.tags )
         else
-            dialogDone model Cmd.none
+            ( model, Cmd.none )
     else if key == "1" then
         ( model, addTagsToSel [ eHigh ] )
     else if key == "2" then
