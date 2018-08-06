@@ -712,7 +712,7 @@ editTagsDone model =
 
 kbshorts_keyshandler : String -> Model -> ( Model, Cmd Msg )
 kbshorts_keyshandler key model =
-    if key == "Enter" && model.shift_on then
+    if key == "Enter" then
         dialogDone model hideWindowCmds
     else if key == "Escape" then
         dialogDone model Cmd.none
@@ -3743,7 +3743,7 @@ kb_shorts_dismissed_1 model =
     in
         Html.div [ style ]
             [ kb_shorts_row_1 "Esc" "Back"
-            , kb_shorts_row_1 "Shift+Enter" "Done & Close"
+            , kb_shorts_row_1 "Enter" "Done & Close"
             ]
 
 
