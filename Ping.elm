@@ -2783,10 +2783,10 @@ show_tag_1 model tag ndx =
         btn_style =
             if ndx == model.ac_ndx then
                 let
-                    s =
+                    stl =
                         List.filter (\( s, _ ) -> s /= "border") btn_press_style
                 in
-                    HA.style (( "border", "1px dashed yellow" ) :: s)
+                    HA.style (( "border", "1px dashed yellow" ) :: stl)
             else
                 HA.style btn_press_style
     in
