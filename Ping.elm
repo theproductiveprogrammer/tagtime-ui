@@ -229,14 +229,19 @@ energyTags =
     [ eSleep, eHigh, eMed, eLow ]
 
 
-specialTag : Tag -> Bool
-specialTag t =
+energyTag : Tag -> Bool
+energyTag t =
     List.member t energyTags
+
+
+commentTag : Tag -> Bool
+commentTag t =
+    String.startsWith "#" t
 
 
 displayTags : List Tag -> List Tag
 displayTags tags =
-    List.filter (\t -> not (specialTag t)) tags
+    List.filter (\t -> not (energyTag t)) tags
 
 
 {-|
@@ -383,7 +388,7 @@ update msg model =
             dialogDone { model | input_tag_cat = "" } (tagCatSet tag cat)
 
         HideWindow ->
-            ( model, hideWindowCmds )
+            ( model, show "off" )
 
         OnScrollTagsUp r ->
             onScrollTagsUp r model
@@ -500,7 +505,7 @@ addUserTag tag model =
     in
         if strEq "" tag then
             openKBShorts model
-        else if is_categorized_tag || specialTag tag then
+        else if is_categorized_tag || energyTag tag || commentTag tag then
             ( model, addTagsToSel [ tag ] )
         else
             ( { model | dialog = Just (CategorizeTag tag) }, focusTagCatInput )
@@ -713,7 +718,7 @@ editTagsDone model =
 kbshorts_keyshandler : String -> Model -> ( Model, Cmd Msg )
 kbshorts_keyshandler key model =
     if key == "Enter" then
-        dialogDone model hideWindowCmds
+        dialogDone model (show "off")
     else if key == "Escape" then
         dialogDone model Cmd.none
     else if key == "r" || key == "R" then
@@ -780,7 +785,7 @@ null, focus the input box, and scroll everything back to the top.
 onPrepareToHide : Model -> ( Model, Cmd Msg )
 onPrepareToHide model =
     ( { model | current = [], shift_start = Nothing, dialog = Nothing }
-    , Cmd.batch [ scrollListsToTop_1, stopKeyHandling False, focusTagInput ]
+    , Cmd.batch [ setSel model.current, scrollListsToTop_1, stopKeyHandling False, focusTagInput ]
     )
 
 
@@ -904,7 +909,7 @@ editTags model =
     let
         edit_tags =
             List.map (editingTagFrom model) <|
-                List.filter (\t -> not (specialTag t)) model.tags
+                List.filter (\t -> not (energyTag t)) model.tags
     in
         ( { model | dialog = Just (EditTags edit_tags) }, Cmd.none )
 
@@ -949,11 +954,6 @@ dialogDone model cmd =
     ( { model | dialog = Nothing }
     , Cmd.batch [ cmd, stopKeyHandling False, focusTagInput ]
     )
-
-
-hideWindowCmds : Cmd Msg
-hideWindowCmds =
-    Cmd.batch [ show "off", setSel [] ]
 
 
 addBrick : Brick -> Model -> ( Model, Cmd Msg )
@@ -3857,7 +3857,7 @@ filtered_tags model =
             normalize model.input_tags_direct_entry
 
         matches tag =
-            if specialTag tag then
+            if energyTag tag then
                 False
             else if String.isEmpty f then
                 True
